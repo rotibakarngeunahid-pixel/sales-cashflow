@@ -138,5 +138,11 @@ export interface Database {
         Update: never
       }
     }
+    Functions: {
+      get_email_by_username: {
+        Args: { p_username: string }
+        Returns: string | null
+      }
+    }
   }
 }
