@@ -75,7 +75,7 @@ export default function AuditLogPage() {
 
   useEffect(() => { load() }, [load])
 
-  const uniqueActions = [...new Set(logs.map((l) => l.action))]
+  const uniqueActions = Array.from(new Set(logs.map((l) => l.action)))
 
   return (
     <div className="space-y-4">
