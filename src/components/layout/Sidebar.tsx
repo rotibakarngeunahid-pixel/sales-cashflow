@@ -1,7 +1,8 @@
 'use client'
 
+import Link from 'next/link'
 import Image from 'next/image'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   PlusSquare,
@@ -14,11 +15,10 @@ import {
   Settings,
   X,
   ChevronRight,
-  Loader2,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo } from 'react'
 
 const LOGO_URL =
   'https://owner-portal.rotibakarngeunah.my.id/wp-content/uploads/2026/05/cropped-Icon-Roti-Bakar-Ngeunah.webp'
@@ -65,9 +65,6 @@ interface SidebarProps {
 
 export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
-  const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [pendingHref, setPendingHref] = useState<string | null>(null)
   const isOwner = profile?.role === 'owner'
 
   const allNavItems = navGroups.flatMap((g) => g.items)
@@ -79,15 +76,6 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
       .find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))
       ?.href
   }, [pathname, visibleNavItems])
-
-  function navigate(href: string) {
-    if (href === pathname) return
-    setPendingHref(href)
-    onClose()
-    startTransition(() => {
-      router.push(href)
-    })
-  }
 
   const initials = (profile?.full_name || profile?.email || 'U')[0].toUpperCase()
 
@@ -112,8 +100,9 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
       >
         {/* Logo / Brand */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-slate-100">
-          <button
-            onClick={() => navigate('/dashboard')}
+          <Link
+            href="/dashboard"
+            onClick={onClose}
             className="flex items-center gap-3 min-w-0 group"
           >
             <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 ring-2 ring-orange-100 group-hover:ring-orange-300 transition-all shadow-sm">
@@ -133,7 +122,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
               <p className="text-sm font-black text-slate-900 tracking-tight">Roti Bakar</p>
               <p className="text-xs font-extrabold text-rbn-red tracking-widest uppercase">Ngeunah</p>
             </div>
-          </button>
+          </Link>
           <button
             onClick={onClose}
             className="lg:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
@@ -157,19 +146,18 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
                   {groupItems.map((item) => {
                     const Icon = item.icon
                     const isActive = activeHref === item.href
-                    const isNavPending = isPending && pendingHref === item.href
 
                     return (
                       <li key={item.href}>
-                        <button
-                          onClick={() => navigate(item.href)}
+                        <Link
+                          href={item.href}
+                          onClick={onClose}
                           aria-current={isActive ? 'page' : undefined}
                           className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all group text-left',
+                            'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all group',
                             isActive
                               ? 'bg-gradient-to-r from-rbn-red to-rbn-orange text-white shadow-md shadow-red-200'
-                              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950',
-                            isNavPending && !isActive && 'opacity-60'
+                              : 'text-slate-600 hover:bg-slate-50 hover:text-slate-950'
                           )}
                         >
                           <Icon
@@ -179,13 +167,10 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
                             )}
                           />
                           <span className="flex-1 truncate">{item.label}</span>
-                          {isNavPending && (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-                          )}
-                          {isActive && !isNavPending && (
+                          {isActive && (
                             <ChevronRight className="w-3.5 h-3.5 text-white/70 flex-shrink-0" />
                           )}
-                        </button>
+                        </Link>
                       </li>
                     )
                   })}
