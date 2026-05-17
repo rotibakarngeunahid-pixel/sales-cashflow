@@ -50,11 +50,12 @@ export default function LoginPage() {
     // Verify account is still active
     const { data: { user } } = await supabase.auth.getUser()
     if (user) {
-      const { data: profile } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
         .select('is_active')
         .eq('id', user.id)
         .single()
+      const profile = profileData as { is_active: boolean } | null
 
       if (!profile?.is_active) {
         await supabase.auth.signOut()
