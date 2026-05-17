@@ -34,9 +34,9 @@ SET role = 'owner', full_name = 'Owner RBN', username = 'owner'
 WHERE email = 'EMAIL_OWNER_ANDA@gmail.com';
 ```
 
-Ganti `EMAIL_OWNER_ANDA@gmail.com` dengan email Anda, dan `owner` dengan username yang Anda inginkan (misalnya `adithya`).
+Ganti `EMAIL_OWNER_ANDA@gmail.com` dengan email Anda. Username default `owner` dipakai otomatis di balik layar untuk login password-only.
 
-**Username ini yang dipakai untuk login** — bukan email.
+Jika username owner diubah, samakan nilainya di `NEXT_PUBLIC_LOGIN_USERNAME`.
 
 ### D. Ambil Anon Key
 1. Buka Supabase Dashboard → Settings → API
@@ -62,6 +62,7 @@ Edit `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://paebvobxukhnyvttkavj.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=MASUKKAN_ANON_KEY_ANDA_DISINI
+NEXT_PUBLIC_LOGIN_USERNAME=owner
 ```
 
 ### C. Tambahkan logo
@@ -79,7 +80,7 @@ Buka http://localhost:3000
 ## 3. Login Pertama
 
 1. Buka http://localhost:3000/login
-2. Login dengan email dan password owner yang sudah dibuat di Supabase
+2. Login langsung dengan password owner yang sudah dibuat di Supabase
 3. Anda akan diarahkan ke dashboard utama
 
 ---
@@ -101,6 +102,7 @@ git push -u origin main
 3. Tambahkan environment variables:
    - `NEXT_PUBLIC_SUPABASE_URL` = https://paebvobxukhnyvttkavj.supabase.co
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = anon key dari Supabase
+   - `NEXT_PUBLIC_LOGIN_USERNAME` = username akun yang dipakai untuk login password-only, default `owner`
 4. Deploy
 
 ### C. Update Supabase Auth URL

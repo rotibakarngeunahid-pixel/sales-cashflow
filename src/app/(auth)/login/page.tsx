@@ -4,12 +4,13 @@ import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
-import { Eye, EyeOff, LogIn, AlertCircle, User, Lock } from 'lucide-react'
+import { Eye, EyeOff, LogIn, AlertCircle, Lock } from 'lucide-react'
+
+const LOGIN_USERNAME = process.env.NEXT_PUBLIC_LOGIN_USERNAME || 'owner'
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -27,11 +28,11 @@ function LoginForm() {
     // Look up email by username via RPC (callable without auth)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: email, error: rpcError } = await (supabase as any).rpc('get_email_by_username', {
-      p_username: username.trim(),
+      p_username: LOGIN_USERNAME,
     })
 
     if (rpcError || !email) {
-      setError('Username atau password salah. Silakan coba lagi.')
+      setError('Password salah. Silakan coba lagi.')
       setLoading(false)
       return
     }
@@ -42,7 +43,7 @@ function LoginForm() {
     })
 
     if (authError) {
-      setError('Username atau password salah. Silakan coba lagi.')
+      setError('Password salah. Silakan coba lagi.')
       setLoading(false)
       return
     }
@@ -133,26 +134,6 @@ function LoginForm() {
             )}
 
             <form onSubmit={handleLogin} className="space-y-3">
-              {/* Username */}
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
-                  Username
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent bg-gray-50 transition-all"
-                    placeholder="Masukkan username"
-                    required
-                    autoComplete="username"
-                    autoFocus
-                  />
-                </div>
-              </div>
-
               {/* Password */}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">
@@ -168,6 +149,7 @@ function LoginForm() {
                     placeholder="••••••••"
                     required
                     autoComplete="current-password"
+                    autoFocus
                   />
                   <button
                     type="button"
