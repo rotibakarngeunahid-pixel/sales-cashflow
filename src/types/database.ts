@@ -1,5 +1,5 @@
 export type UserRole = 'owner' | 'admin'
-export type SalesStatus = 'draft' | 'posted' | 'void'
+export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
 export type CashflowSource = 'manual' | 'sales'
 export type CashflowStatus = 'active' | 'void'

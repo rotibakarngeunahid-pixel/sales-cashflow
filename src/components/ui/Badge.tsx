@@ -3,6 +3,7 @@ import type { SalesStatus, CashflowStatus, CashflowType } from '@/types/database
 export function SalesBadge({ status }: { status: SalesStatus }) {
   const map: Record<SalesStatus, { label: string; className: string }> = {
     draft: { label: 'Draft', className: 'badge-draft' },
+    submitted: { label: 'Submitted', className: 'badge-submitted' },
     posted: { label: 'Posted', className: 'badge-posted' },
     void: { label: 'Void', className: 'badge-void' },
   }

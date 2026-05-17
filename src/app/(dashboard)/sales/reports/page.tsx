@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Plus, Eye, Pencil, CheckCircle, XCircle, Download,
-  FileSpreadsheet, RefreshCw, Trash2
+  FileSpreadsheet, RefreshCw, Trash2, CheckCircle2, X
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { SalesReport, SalesStatus, Branch, Profile } from '@/types/database'
@@ -20,12 +20,40 @@ import { format, startOfMonth, endOfMonth } from 'date-fns'
 
 type ActionType = 'post' | 'void'
 
+function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+  return (
+    <div
+      className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${
+        type === 'success'
+          ? 'bg-emerald-600 text-white'
+          : 'bg-red-600 text-white'
+      }`}
+    >
+      {type === 'success'
+        ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+        : <XCircle className="w-4 h-4 flex-shrink-0" />
+      }
+      <span>{message}</span>
+      <button onClick={onClose} className="ml-1 opacity-70 hover:opacity-100">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
 export default function SalesReportsPage() {
   const router = useRouter()
   const [reports, setReports] = useState<SalesReport[]>([])
   const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
+
+  // Toast notification
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const toastTimerRef = useCallback((msg: string, type: 'success' | 'error') => {
+    setToast({ message: msg, type })
+    setTimeout(() => setToast(null), 4000)
+  }, [])
 
   // Filters
   const today = new Date()
@@ -89,9 +117,16 @@ export default function SalesReportsPage() {
     const newStatus: SalesStatus = actionTarget.type === 'post' ? 'posted' : 'void'
     const oldReport = actionTarget.report
 
-    await supabase.from('sales_reports')
+    const { error: updateError } = await supabase.from('sales_reports')
       .update({ status: newStatus, updated_by: user?.id ?? null })
       .eq('id', oldReport.id)
+
+    if (updateError) {
+      toastTimerRef(`Gagal: ${updateError.message}`, 'error')
+      setActioning(false)
+      setActionTarget(null)
+      return
+    }
 
     const auditAction = actionTarget.type === 'post' ? 'sales_posted' : 'sales_voided'
     await supabase.from('audit_logs').insert({
@@ -106,6 +141,11 @@ export default function SalesReportsPage() {
 
     setActioning(false)
     setActionTarget(null)
+
+    const successMsg = actionTarget.type === 'post'
+      ? 'Laporan berhasil diposting! Data masuk ke cashflow.'
+      : 'Laporan berhasil divoid.'
+    toastTimerRef(successMsg, 'success')
     load()
   }
 
@@ -116,7 +156,6 @@ export default function SalesReportsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     const now = new Date().toISOString()
 
-    // Audit log sebelum hapus
     await supabase.from('audit_logs').insert({
       table_name: 'sales_reports',
       record_id: deleteTarget.id,
@@ -127,15 +166,22 @@ export default function SalesReportsPage() {
       changed_at: now,
     })
 
-    // Hapus cashflow_transactions yang berasal dari laporan ini
     await supabase.from('cashflow_transactions').delete().eq('source_id', deleteTarget.id)
 
-    // Hapus laporan penjualan
-    await supabase.from('sales_reports').delete().eq('id', deleteTarget.id)
+    const { error: deleteError } = await supabase.from('sales_reports').delete().eq('id', deleteTarget.id)
+
+    if (deleteError) {
+      toastTimerRef(`Gagal menghapus: ${deleteError.message}`, 'error')
+      setDeleting(false)
+      setDeleteTarget(null)
+      setDeleteReason('')
+      return
+    }
 
     setDeleting(false)
     setDeleteTarget(null)
     setDeleteReason('')
+    toastTimerRef('Draft berhasil dihapus.', 'success')
     load()
   }
 
@@ -152,6 +198,15 @@ export default function SalesReportsPage() {
 
   return (
     <div className="space-y-4">
+      {/* Toast */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
@@ -160,9 +215,7 @@ export default function SalesReportsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              exportSalesToExcel(reports)
-            }}
+            onClick={() => exportSalesToExcel(reports)}
             className="btn-outline flex items-center gap-1.5 text-sm"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -199,6 +252,7 @@ export default function SalesReportsPage() {
             placeholder="Semua Status"
             options={[
               { value: 'draft', label: 'Draft' },
+              { value: 'submitted', label: 'Submitted' },
               { value: 'posted', label: 'Posted' },
               { value: 'void', label: 'Void' },
             ]}
@@ -277,13 +331,16 @@ export default function SalesReportsPage() {
                     </td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
+                        {/* View */}
                         <button
                           onClick={() => setDetailReport(report)}
                           className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors"
-                          title="Detail"
+                          title="Lihat Detail"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
+
+                        {/* Edit — not allowed for void */}
                         {report.status !== 'void' && (
                           <button
                             onClick={() => { setEditReport(report); setEditModalOpen(true) }}
@@ -293,15 +350,19 @@ export default function SalesReportsPage() {
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {report.status === 'draft' && (
+
+                        {/* Post — for draft and submitted */}
+                        {(report.status === 'draft' || report.status === 'submitted') && (
                           <button
                             onClick={() => setActionTarget({ report, type: 'post' })}
                             className="p-1.5 rounded-lg hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors"
-                            title="Post"
+                            title="Post (Finalisasi)"
                           >
                             <CheckCircle className="w-3.5 h-3.5" />
                           </button>
                         )}
+
+                        {/* Void — for draft, submitted, posted */}
                         {report.status !== 'void' && (
                           <button
                             onClick={() => setActionTarget({ report, type: 'void' })}
@@ -311,13 +372,17 @@ export default function SalesReportsPage() {
                             <XCircle className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <button
-                          onClick={() => { setDeleteTarget(report); setDeleteReason('') }}
-                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
-                          title="Hapus"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+
+                        {/* Hapus Draft — hard delete, only for draft/submitted */}
+                        {(report.status === 'draft' || report.status === 'submitted') && (
+                          <button
+                            onClick={() => { setDeleteTarget(report); setDeleteReason('') }}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                            title="Hapus Draft"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -337,7 +402,11 @@ export default function SalesReportsPage() {
       >
         <SalesForm
           initialData={editReport}
-          onSuccess={() => { setEditModalOpen(false); load() }}
+          onSuccess={(msg) => {
+            setEditModalOpen(false)
+            toastTimerRef(msg || 'Perubahan berhasil disimpan.', 'success')
+            load()
+          }}
           onCancel={() => setEditModalOpen(false)}
         />
       </Modal>
@@ -423,7 +492,7 @@ export default function SalesReportsPage() {
         </Modal>
       )}
 
-      {/* Action Confirm Modal */}
+      {/* Action Confirm Modal (Post / Void) */}
       <ConfirmModal
         isOpen={!!actionTarget}
         onClose={() => setActionTarget(null)}
@@ -432,7 +501,7 @@ export default function SalesReportsPage() {
         title={actionTarget?.type === 'post' ? 'Post Laporan Penjualan' : 'Void Laporan Penjualan'}
         description={
           actionTarget?.type === 'post'
-            ? `Posting laporan ${actionTarget?.report.branch?.name} tanggal ${formatDate(actionTarget?.report.report_date || '')}? Data akan otomatis masuk ke cashflow.`
+            ? `Posting laporan ${actionTarget?.report.branch?.name} tanggal ${formatDate(actionTarget?.report.report_date || '')}? Status berubah menjadi Posted dan data otomatis masuk ke cashflow.`
             : `Void laporan ${actionTarget?.report.branch?.name} tanggal ${formatDate(actionTarget?.report.report_date || '')}? Cashflow terkait juga akan divoid.`
         }
         confirmLabel={actionTarget?.type === 'post' ? 'Post Sekarang' : 'Void'}
@@ -449,13 +518,14 @@ export default function SalesReportsPage() {
         onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
         onConfirm={handleDelete}
         loading={deleting}
-        title="Hapus Laporan Penjualan"
-        description={`Yakin ingin menghapus laporan ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Data cashflow yang terhubung juga akan ikut terhapus secara permanen.`}
+        title="Hapus Draft Penjualan"
+        description={`Yakin ingin menghapus laporan ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Data akan dihapus permanen dan tidak bisa dikembalikan.`}
         confirmLabel="Hapus Permanen"
         confirmClass="bg-red-600 hover:bg-red-700 text-white"
         showReason
         reason={deleteReason}
         onReasonChange={setDeleteReason}
+        reasonPlaceholder="Alasan penghapusan (opsional)..."
       />
     </div>
   )

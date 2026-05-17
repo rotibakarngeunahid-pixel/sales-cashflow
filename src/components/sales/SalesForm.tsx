@@ -1,18 +1,18 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useForm, Controller } from 'react-hook-form'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { salesSchema, type SalesFormData } from '@/lib/validations/sales'
 import { calculateSales } from '@/lib/utils/calculations'
 import { formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import type { Branch, SalesReport } from '@/types/database'
 import { createClient } from '@/lib/supabase/client'
-import { ChevronDown, ChevronUp, Info } from 'lucide-react'
+import { ChevronDown, ChevronUp, Info, CheckCircle2, Send } from 'lucide-react'
 
 interface SalesFormProps {
   initialData?: SalesReport | null
-  onSuccess: () => void
+  onSuccess: (message?: string) => void
   onCancel: () => void
 }
 
@@ -82,6 +82,9 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   const [showGrabfood, setShowGrabfood] = useState(true)
   const [showShopeefood, setShowShopeefood] = useState(true)
   const [calcs, setCalcs] = useState<ReturnType<typeof calculateSales> | null>(null)
+
+  // Tracks which button the user clicked: 'draft' or 'submitted'
+  const submitIntentRef = useRef<'draft' | 'submitted'>('draft')
 
   const {
     register,
@@ -195,9 +198,17 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     }
 
     if (initialData) {
+      // When editing: keep the current status unless it's a draft/submitted being submitted
+      let newStatus = initialData.status
+      if (initialData.status === 'draft' && submitIntentRef.current === 'submitted') {
+        newStatus = 'submitted'
+      } else if (initialData.status === 'submitted' && submitIntentRef.current === 'draft') {
+        newStatus = 'draft'
+      }
+
       const { error: updateError } = await supabase
         .from('sales_reports')
-        .update(payload)
+        .update({ ...payload, status: newStatus })
         .eq('id', initialData.id)
 
       if (updateError) {
@@ -211,14 +222,26 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
         record_id: initialData.id,
         action: 'sales_updated',
         old_data: initialData as unknown as Record<string, unknown>,
-        new_data: payload as unknown as Record<string, unknown>,
+        new_data: { ...payload, status: newStatus } as unknown as Record<string, unknown>,
         changed_by: user?.id ?? null,
         changed_at: new Date().toISOString(),
       })
+
+      setSaving(false)
+      const isDraftToSubmit = initialData.status === 'draft' && newStatus === 'submitted'
+      const isSubmitToDraft = initialData.status === 'submitted' && newStatus === 'draft'
+      const msg = isDraftToSubmit
+        ? 'Laporan berhasil disubmit!'
+        : isSubmitToDraft
+        ? 'Laporan dikembalikan ke Draft.'
+        : 'Perubahan berhasil disimpan.'
+      onSuccess(msg)
     } else {
+      const statusToCreate = submitIntentRef.current === 'submitted' ? 'submitted' : 'draft'
+
       const { data: newSale, error: insertError } = await supabase
         .from('sales_reports')
-        .insert({ ...payload, status: 'draft', created_by: user?.id ?? null })
+        .insert({ ...payload, status: statusToCreate, created_by: user?.id ?? null })
         .select()
         .single()
 
@@ -239,14 +262,24 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           changed_at: new Date().toISOString(),
         })
       }
-    }
 
-    setSaving(false)
-    onSuccess()
+      setSaving(false)
+      const msg = statusToCreate === 'submitted'
+        ? 'Penjualan berhasil disubmit!'
+        : 'Draft berhasil disimpan.'
+      onSuccess(msg)
+    }
   }
 
+  // Determines which button labels to show based on existing data status
+  const isEditingPosted = initialData?.status === 'posted'
+  const isEditingVoid = initialData?.status === 'void'
+  const isEditingSubmitted = initialData?.status === 'submitted'
+  const showDraftAndSubmitButtons = !initialData || initialData.status === 'draft'
+  const showSubmittedButtons = isEditingSubmitted
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+    <form onSubmit={(e) => e.preventDefault()} className="space-y-5">
       {error && (
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm font-medium text-red-700">
           {error}
@@ -405,13 +438,73 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       </div>
 
       {/* Buttons */}
-      <div className="flex gap-3 justify-end pt-3 border-t border-slate-200">
-        <button type="button" onClick={onCancel} className="btn-outline text-sm">
+      <div className="flex flex-col sm:flex-row gap-3 justify-end pt-3 border-t border-slate-200">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="btn-outline text-sm order-last sm:order-first"
+        >
           Batal
         </button>
-        <button type="submit" disabled={saving} className="btn-primary text-sm">
-          {saving ? 'Menyimpan...' : initialData ? 'Simpan Perubahan' : 'Simpan Draft'}
-        </button>
+
+        {/* Posted/Void: only save changes (preserves status) */}
+        {(isEditingPosted || isEditingVoid) && (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => { submitIntentRef.current = 'draft'; handleSubmit(onSubmit)() }}
+            className="btn-primary text-sm flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+          </button>
+        )}
+
+        {/* Submitted: can revert to draft or resave as submitted */}
+        {showSubmittedButtons && (
+          <>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => { submitIntentRef.current = 'draft'; handleSubmit(onSubmit)() }}
+              className="btn-outline text-sm"
+            >
+              {saving ? 'Menyimpan...' : 'Kembalikan ke Draft'}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => { submitIntentRef.current = 'submitted'; handleSubmit(onSubmit)() }}
+              className="btn-primary text-sm flex items-center justify-center gap-2"
+            >
+              <Send className="w-4 h-4" />
+              {saving ? 'Menyimpan...' : 'Simpan Perubahan'}
+            </button>
+          </>
+        )}
+
+        {/* New or Draft: can save as draft or submit */}
+        {showDraftAndSubmitButtons && (
+          <>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => { submitIntentRef.current = 'draft'; handleSubmit(onSubmit)() }}
+              className="btn-outline text-sm"
+            >
+              {saving ? 'Menyimpan...' : initialData ? 'Simpan Draft' : 'Simpan Draft'}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => { submitIntentRef.current = 'submitted'; handleSubmit(onSubmit)() }}
+              className="btn-primary text-sm flex items-center justify-center gap-2"
+            >
+              <Send className="w-4 h-4" />
+              {saving ? 'Memproses...' : 'Submit Penjualan'}
+            </button>
+          </>
+        )}
       </div>
     </form>
   )
