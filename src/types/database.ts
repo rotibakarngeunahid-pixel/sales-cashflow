@@ -108,38 +108,242 @@ export interface Database {
   public: {
     Tables: {
       profiles: {
-        Row: Profile
-        Insert: Omit<Profile, 'created_at' | 'updated_at'>
-        Update: Partial<Omit<Profile, 'id' | 'created_at' | 'updated_at'>>
+        Row: {
+          id: string
+          full_name: string | null
+          email: string | null
+          username: string | null
+          role: UserRole
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          full_name?: string | null
+          email?: string | null
+          username?: string | null
+          role?: UserRole
+          is_active?: boolean
+        }
+        Update: {
+          full_name?: string | null
+          email?: string | null
+          username?: string | null
+          role?: UserRole
+          is_active?: boolean
+        }
         Relationships: []
       }
       branches: {
-        Row: Branch
-        Insert: Omit<Branch, 'id' | 'created_at' | 'updated_at' | 'is_active'> & { is_active?: boolean }
-        Update: Partial<Omit<Branch, 'id' | 'created_at' | 'updated_at'>>
+        Row: {
+          id: string
+          name: string
+          address: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          name: string
+          address?: string | null
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          address?: string | null
+          is_active?: boolean
+        }
         Relationships: []
       }
       cashflow_categories: {
-        Row: CashflowCategory
-        Insert: Omit<CashflowCategory, 'id' | 'created_at' | 'updated_at' | 'is_active'> & { is_active?: boolean }
-        Update: Partial<Omit<CashflowCategory, 'id' | 'created_at' | 'updated_at'>>
+        Row: {
+          id: string
+          name: string
+          default_type: CategoryDefaultType
+          description: string | null
+          is_active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          name: string
+          default_type: CategoryDefaultType
+          description?: string | null
+          is_active?: boolean
+        }
+        Update: {
+          name?: string
+          default_type?: CategoryDefaultType
+          description?: string | null
+          is_active?: boolean
+        }
         Relationships: []
       }
       sales_reports: {
-        Row: SalesReport
-        Insert: Omit<SalesReport, 'id' | 'created_at' | 'updated_at' | 'branch' | 'creator' | 'updater'>
-        Update: Partial<Omit<SalesReport, 'id' | 'created_at' | 'updated_at' | 'branch' | 'creator' | 'updater'>>
+        Row: {
+          id: string
+          report_date: string
+          branch_id: string
+          cash: number
+          qris: number
+          gofood_gross: number
+          gofood_promo: number
+          gofood_commission: number
+          gofood_nett: number
+          grabfood_gross: number
+          grabfood_promo: number
+          grabfood_commission: number
+          grabfood_ads: number
+          grabfood_nett: number
+          shopeefood_gross: number
+          shopeefood_promo: number
+          shopeefood_commission: number
+          shopeefood_nett: number
+          total_offline: number
+          total_online_gross: number
+          total_online_nett: number
+          total_online_deduction: number
+          grand_total_nett_sales: number
+          online_deduction_percentage: number
+          status: SalesStatus
+          notes: string | null
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          report_date: string
+          branch_id: string
+          cash?: number
+          qris?: number
+          gofood_gross?: number
+          gofood_promo?: number
+          gofood_commission?: number
+          gofood_nett?: number
+          grabfood_gross?: number
+          grabfood_promo?: number
+          grabfood_commission?: number
+          grabfood_ads?: number
+          grabfood_nett?: number
+          shopeefood_gross?: number
+          shopeefood_promo?: number
+          shopeefood_commission?: number
+          shopeefood_nett?: number
+          total_offline?: number
+          total_online_gross?: number
+          total_online_nett?: number
+          total_online_deduction?: number
+          grand_total_nett_sales?: number
+          online_deduction_percentage?: number
+          status?: SalesStatus
+          notes?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          report_date?: string
+          branch_id?: string
+          cash?: number
+          qris?: number
+          gofood_gross?: number
+          gofood_promo?: number
+          gofood_commission?: number
+          gofood_nett?: number
+          grabfood_gross?: number
+          grabfood_promo?: number
+          grabfood_commission?: number
+          grabfood_ads?: number
+          grabfood_nett?: number
+          shopeefood_gross?: number
+          shopeefood_promo?: number
+          shopeefood_commission?: number
+          shopeefood_nett?: number
+          total_offline?: number
+          total_online_gross?: number
+          total_online_nett?: number
+          total_online_deduction?: number
+          grand_total_nett_sales?: number
+          online_deduction_percentage?: number
+          status?: SalesStatus
+          notes?: string | null
+          created_by?: string | null
+          updated_by?: string | null
+        }
         Relationships: []
       }
       cashflow_transactions: {
-        Row: CashflowTransaction
-        Insert: Omit<CashflowTransaction, 'id' | 'created_at' | 'updated_at' | 'branch' | 'category' | 'source_id'> & { source_id?: string | null }
-        Update: Partial<Omit<CashflowTransaction, 'id' | 'created_at' | 'updated_at' | 'branch' | 'category'>>
+        Row: {
+          id: string
+          transaction_date: string
+          branch_id: string
+          transaction_type: CashflowType
+          category_id: string | null
+          description: string | null
+          cash_in: number
+          cash_out: number
+          amount: number
+          source: CashflowSource
+          source_id: string | null
+          status: CashflowStatus
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          transaction_date: string
+          branch_id: string
+          transaction_type: CashflowType
+          amount: number
+          category_id?: string | null
+          description?: string | null
+          cash_in?: number
+          cash_out?: number
+          source?: CashflowSource
+          source_id?: string | null
+          status?: CashflowStatus
+          created_by?: string | null
+          updated_by?: string | null
+        }
+        Update: {
+          transaction_date?: string
+          branch_id?: string
+          transaction_type?: CashflowType
+          category_id?: string | null
+          description?: string | null
+          cash_in?: number
+          cash_out?: number
+          amount?: number
+          source?: CashflowSource
+          source_id?: string | null
+          status?: CashflowStatus
+          created_by?: string | null
+          updated_by?: string | null
+        }
         Relationships: []
       }
       audit_logs: {
-        Row: AuditLog
-        Insert: Omit<AuditLog, 'id' | 'changer'>
+        Row: {
+          id: string
+          table_name: string
+          record_id: string | null
+          action: string
+          old_data: Record<string, unknown> | null
+          new_data: Record<string, unknown> | null
+          changed_by: string | null
+          changed_at: string
+        }
+        Insert: {
+          table_name: string
+          action: string
+          changed_at: string
+          record_id?: string | null
+          old_data?: Record<string, unknown> | null
+          new_data?: Record<string, unknown> | null
+          changed_by?: string | null
+        }
         Update: never
         Relationships: []
       }
