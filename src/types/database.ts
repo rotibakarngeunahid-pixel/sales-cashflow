@@ -111,38 +111,53 @@ export interface Database {
         Row: Profile
         Insert: Omit<Profile, 'created_at' | 'updated_at'>
         Update: Partial<Omit<Profile, 'id' | 'created_at' | 'updated_at'>>
+        Relationships: []
       }
       branches: {
         Row: Branch
-        Insert: Omit<Branch, 'id' | 'created_at' | 'updated_at'>
+        Insert: Omit<Branch, 'id' | 'created_at' | 'updated_at' | 'is_active'> & { is_active?: boolean }
         Update: Partial<Omit<Branch, 'id' | 'created_at' | 'updated_at'>>
+        Relationships: []
       }
       cashflow_categories: {
         Row: CashflowCategory
-        Insert: Omit<CashflowCategory, 'id' | 'created_at' | 'updated_at'>
+        Insert: Omit<CashflowCategory, 'id' | 'created_at' | 'updated_at' | 'is_active'> & { is_active?: boolean }
         Update: Partial<Omit<CashflowCategory, 'id' | 'created_at' | 'updated_at'>>
+        Relationships: []
       }
       sales_reports: {
         Row: SalesReport
         Insert: Omit<SalesReport, 'id' | 'created_at' | 'updated_at' | 'branch' | 'creator' | 'updater'>
         Update: Partial<Omit<SalesReport, 'id' | 'created_at' | 'updated_at' | 'branch' | 'creator' | 'updater'>>
+        Relationships: []
       }
       cashflow_transactions: {
         Row: CashflowTransaction
-        Insert: Omit<CashflowTransaction, 'id' | 'created_at' | 'updated_at' | 'branch' | 'category'>
+        Insert: Omit<CashflowTransaction, 'id' | 'created_at' | 'updated_at' | 'branch' | 'category' | 'source_id'> & { source_id?: string | null }
         Update: Partial<Omit<CashflowTransaction, 'id' | 'created_at' | 'updated_at' | 'branch' | 'category'>>
+        Relationships: []
       }
       audit_logs: {
         Row: AuditLog
         Insert: Omit<AuditLog, 'id' | 'changer'>
         Update: never
+        Relationships: []
       }
+    }
+    Views: {
+      [_ in never]: never
     }
     Functions: {
       get_email_by_username: {
         Args: { p_username: string }
         Returns: string | null
       }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
     }
   }
 }
