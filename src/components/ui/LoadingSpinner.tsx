@@ -11,7 +11,7 @@ export function PageLoading() {
     <div className="flex items-center justify-center h-64">
       <div className="text-center">
         <LoadingSpinner className="w-8 h-8 mx-auto mb-3" />
-        <p className="text-sm text-gray-500">Memuat data...</p>
+        <p className="text-sm font-medium text-slate-500">Memuat data...</p>
       </div>
     </div>
   )

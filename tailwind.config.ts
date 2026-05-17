@@ -9,6 +9,9 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        app: {
+          surface: "#F6F7FB",
+        },
         rbn: {
           red: "#DC2626",
           "red-dark": "#B91C1C",

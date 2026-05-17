@@ -28,17 +28,17 @@ interface NumericInputProps {
 function NumericInput({ label, name, register, error, hint, readOnly }: NumericInputProps) {
   return (
     <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <label className="block text-xs font-bold text-slate-600 mb-1">{label}</label>
       <input
         type="number"
         step="1"
         min="0"
         readOnly={readOnly}
         {...register(name)}
-        className={`input-field text-sm ${readOnly ? 'bg-gray-50 text-gray-500' : ''}`}
+        className={`input-field text-sm font-semibold text-rupiah ${readOnly ? 'bg-slate-50 text-slate-500' : ''}`}
         placeholder="0"
       />
-      {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
+      {hint && <p className="text-xs text-slate-400 mt-0.5">{hint}</p>}
       {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
     </div>
   )
@@ -59,17 +59,17 @@ function SectionHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+      className="w-full flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:bg-white hover:border-slate-300 transition-colors"
     >
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-gray-700">{title}</span>
+        <span className="text-sm font-bold text-slate-800">{title}</span>
         {badge && (
-          <span className="text-xs bg-rbn-orange/10 text-rbn-orange px-2 py-0.5 rounded-full font-medium">
+          <span className="text-xs bg-rbn-orange/10 text-rbn-orange px-2 py-0.5 rounded-full font-bold text-rupiah">
             {badge}
           </span>
         )}
       </div>
-      {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+      {expanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
     </button>
   )
 }
@@ -247,15 +247,15 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm font-medium text-red-700">
           {error}
         </div>
       )}
 
       {/* Basic info */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-bold text-slate-700 mb-1">
             Tanggal <span className="text-red-500">*</span>
           </label>
           <input
@@ -268,7 +268,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-bold text-slate-700 mb-1">
             Cabang <span className="text-red-500">*</span>
           </label>
           <select {...register('branch_id')} className="input-field">
@@ -285,7 +285,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
 
       {/* Offline Sales */}
       <div>
-        <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+        <h3 className="text-sm font-bold text-slate-950 mb-3 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-rbn-red"></span>
           Penjualan Offline
         </h3>
@@ -294,8 +294,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           <NumericInput label="QRIS" name="qris" register={register} error={errors.qris?.message} />
         </div>
         {calcs && (
-          <p className="text-xs text-gray-500 mt-2">
-            Total Offline: <span className="font-semibold text-gray-700">{formatRupiah(calcs.total_offline)}</span>
+          <p className="text-xs text-slate-500 mt-2">
+            Total Offline: <span className="font-bold text-slate-800 text-rupiah">{formatRupiah(calcs.total_offline)}</span>
           </p>
         )}
       </div>
@@ -357,26 +357,26 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
 
       {/* Summary */}
       {calcs && (
-        <div className="bg-gradient-to-r from-rbn-red/5 to-rbn-orange/5 border border-rbn-orange/20 rounded-xl p-4">
-          <h3 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-1.5">
+        <div className="bg-gradient-to-r from-rbn-red/5 to-rbn-orange/5 border border-rbn-orange/20 rounded-lg p-4">
+          <h3 className="text-sm font-bold text-slate-950 mb-3 flex items-center gap-1.5">
             <Info className="w-4 h-4 text-rbn-orange" />
             Ringkasan Perhitungan
           </h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <p className="text-gray-500 text-xs">Total Offline</p>
+              <p className="text-slate-500 text-xs">Total Offline</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_offline)}</p>
             </div>
             <div>
-              <p className="text-gray-500 text-xs">Total Online Gross</p>
+              <p className="text-slate-500 text-xs">Total Online Gross</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_online_gross)}</p>
             </div>
             <div>
-              <p className="text-gray-500 text-xs">Total Online Nett</p>
+              <p className="text-slate-500 text-xs">Total Online Nett</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_online_nett)}</p>
             </div>
             <div>
-              <p className="text-gray-500 text-xs">Total Potongan Online</p>
+              <p className="text-slate-500 text-xs">Total Potongan Online</p>
               <p className="font-semibold text-red-600 text-rupiah">
                 -{formatRupiah(calcs.total_online_deduction)}
                 {calcs.online_deduction_percentage > 0 && (
@@ -386,7 +386,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
             </div>
           </div>
           <div className="mt-3 pt-3 border-t border-rbn-orange/20">
-            <p className="text-xs text-gray-500">Grand Total Nett Sales</p>
+            <p className="text-xs text-slate-500">Grand Total Nett Sales</p>
             <p className="text-2xl font-bold text-rbn-red text-rupiah">{formatRupiah(calcs.grand_total_nett_sales)}</p>
           </div>
         </div>
@@ -394,7 +394,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
 
       {/* Notes */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Catatan (opsional)</label>
+        <label className="block text-sm font-bold text-slate-700 mb-1">Catatan (opsional)</label>
         <textarea
           {...register('notes')}
           className="input-field resize-none"
@@ -404,7 +404,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       </div>
 
       {/* Buttons */}
-      <div className="flex gap-3 justify-end pt-2 border-t border-gray-100">
+      <div className="flex gap-3 justify-end pt-3 border-t border-slate-200">
         <button type="button" onClick={onCancel} className="btn-outline text-sm">
           Batal
         </button>

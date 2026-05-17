@@ -71,37 +71,29 @@ function LoginForm() {
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background gradient + blobs */}
-      <div className="absolute inset-0 bg-gradient-to-br from-red-700 via-orange-600 to-yellow-500" />
-      <div className="absolute -top-32 -left-32 w-96 h-96 bg-yellow-400/20 rounded-full blur-3xl" />
-      <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-red-900/30 rounded-full blur-3xl" />
+    <div className="min-h-screen w-full flex items-center justify-center p-4 relative overflow-hidden bg-[linear-gradient(135deg,#991B1B_0%,#EA580C_48%,#F59E0B_100%)]">
+      <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(#fff_1px,transparent_1px),linear-gradient(90deg,#fff_1px,transparent_1px)] [background-size:44px_44px]" />
 
       {/* Card */}
       <div className="relative w-full max-w-sm">
-        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+        <div className="bg-white rounded-lg shadow-2xl shadow-red-950/25 overflow-hidden border border-white/40">
 
           {/* Logo area */}
-          <div className="relative bg-gradient-to-b from-red-700 to-orange-600 px-6 pt-10 pb-16 flex flex-col items-center">
-            {/* Glow behind logo */}
-            <div className="absolute inset-0 flex items-center justify-center opacity-20">
-              <div className="w-48 h-48 bg-yellow-400 rounded-full blur-3xl" />
-            </div>
-
+          <div className="relative bg-[linear-gradient(180deg,#B91C1C_0%,#EA580C_100%)] px-6 pt-9 pb-14 flex flex-col items-center">
             {/* Logo */}
-            <div className="relative z-10 w-52 h-auto flex items-center justify-center">
+            <div className="relative z-10 h-36 w-36 overflow-hidden rounded-lg bg-white/10 ring-1 ring-white/20 shadow-xl">
               <Image
-                src="/rbngeunahicon.webp"
+                src="https://owner-portal.rotibakarngeunah.my.id/wp-content/uploads/2026/05/cropped-Icon-Roti-Bakar-Ngeunah.webp"
                 alt="Roti Bakar Ngeunah"
-                width={210}
-                height={210}
-                className="object-contain drop-shadow-2xl"
+                width={160}
+                height={160}
+                className="h-full w-full object-cover"
                 priority
               />
             </div>
 
             {/* Tagline */}
-            <p className="relative z-10 mt-3 text-orange-100 text-xs tracking-widest uppercase font-medium">
+            <p className="relative z-10 mt-4 text-orange-50 text-xs tracking-widest uppercase font-bold">
               Sales &amp; Cashflow System
             </p>
           </div>
@@ -115,19 +107,19 @@ function LoginForm() {
 
           {/* Form */}
           <div className="px-7 pb-8 -mt-2">
-            <h2 className="text-gray-900 text-lg font-bold mb-1 text-center">Selamat Datang!</h2>
-            <p className="text-gray-400 text-xs text-center mb-6">Masuk ke sistem internal admin</p>
+            <h2 className="text-slate-950 text-lg font-extrabold mb-1 text-center">Selamat Datang!</h2>
+            <p className="text-slate-500 text-xs text-center mb-6">Masuk untuk mencatat penjualan hari ini</p>
 
             {/* Error banners */}
             {isInactive && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <p className="text-red-700 text-xs">Akun Anda tidak aktif. Hubungi owner.</p>
               </div>
             )}
 
             {error && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <p className="text-red-700 text-xs">{error}</p>
               </div>
@@ -145,7 +137,7 @@ function LoginForm() {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-11 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent bg-gray-50 transition-all"
+                    className="w-full pl-10 pr-11 py-3 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 bg-slate-50 transition-all"
                     placeholder="••••••••"
                     required
                     autoComplete="current-password"
@@ -154,7 +146,7 @@ function LoginForm() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -165,7 +157,7 @@ function LoginForm() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 bg-gradient-to-r from-red-600 to-orange-500 text-white py-3 rounded-xl font-bold text-sm hover:from-red-700 hover:to-orange-600 transition-all shadow-lg shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full mt-2 bg-gradient-to-r from-red-600 to-orange-500 text-white py-3 rounded-lg font-bold text-sm hover:from-red-700 hover:to-orange-600 transition-all shadow-lg shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>

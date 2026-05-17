@@ -1,7 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   images: {
-    domains: [],
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'owner-portal.rotibakarngeunah.my.id',
+      },
+    ],
   },
   experimental: {
     serverActions: {
