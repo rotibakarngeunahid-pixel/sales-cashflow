@@ -70,6 +70,10 @@ interface ConfirmModalProps {
   confirmLabel?: string
   confirmClass?: string
   loading?: boolean
+  showReason?: boolean
+  reason?: string
+  onReasonChange?: (r: string) => void
+  reasonPlaceholder?: string
 }
 
 export function ConfirmModal({
@@ -81,10 +85,26 @@ export function ConfirmModal({
   confirmLabel = 'Konfirmasi',
   confirmClass = 'bg-rbn-red hover:bg-rbn-red-dark text-white',
   loading = false,
+  showReason = false,
+  reason = '',
+  onReasonChange,
+  reasonPlaceholder = 'Alasan penghapusan (opsional)...',
 }: ConfirmModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="sm">
-      <p className="text-sm text-gray-600 mb-6">{description}</p>
+      <p className="text-sm text-gray-600 mb-4">{description}</p>
+      {showReason && (
+        <div className="mb-5">
+          <label className="block text-xs font-medium text-gray-700 mb-1">Alasan Penghapusan</label>
+          <textarea
+            value={reason}
+            onChange={(e) => onReasonChange?.(e.target.value)}
+            className="input-field resize-none text-sm"
+            rows={2}
+            placeholder={reasonPlaceholder}
+          />
+        </div>
+      )}
       <div className="flex gap-3 justify-end">
         <button onClick={onClose} disabled={loading} className="btn-outline text-sm">
           Batal

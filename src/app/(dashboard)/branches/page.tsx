@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, ToggleLeft, ToggleRight, Building2 } from 'lucide-react'
+import { Plus, Pencil, ToggleLeft, ToggleRight, Building2, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { Branch, Profile } from '@/types/database'
 import { formatDateTime } from '@/lib/utils/format'
@@ -21,6 +21,8 @@ export default function BranchesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editBranch, setEditBranch] = useState<Branch | null>(null)
   const [toggleTarget, setToggleTarget] = useState<Branch | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Branch | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null)
 
@@ -30,7 +32,7 @@ export default function BranchesPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    let query = supabase.from('branches').select('*').order('name')
+    let query = supabase.from('branches').select('*').is('deleted_at', null).order('name')
     if (filterActive !== '') {
       query = query.eq('is_active', filterActive === 'true')
     }
@@ -120,6 +122,34 @@ export default function BranchesPage() {
     })
     setSaving(false)
     setToggleTarget(null)
+    load()
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setSaving(true)
+    const supabase = createClient()
+    const now = new Date().toISOString()
+
+    // Try hard delete first; fall back to soft delete on FK constraint violation
+    const { error } = await supabase.from('branches').delete().eq('id', deleteTarget.id)
+    if (error) {
+      await supabase.from('branches').update({ deleted_at: now }).eq('id', deleteTarget.id)
+    }
+
+    await supabase.from('audit_logs').insert({
+      table_name: 'branches',
+      record_id: deleteTarget.id,
+      action: 'branch_deleted',
+      old_data: deleteTarget as unknown as Record<string, unknown>,
+      new_data: { delete_reason: deleteReason || null, soft_deleted: !!error } as Record<string, unknown>,
+      changed_by: currentProfile?.id ?? null,
+      changed_at: now,
+    })
+
+    setSaving(false)
+    setDeleteTarget(null)
+    setDeleteReason('')
     load()
   }
 
@@ -218,6 +248,13 @@ export default function BranchesPage() {
                             <ToggleLeft className="w-4 h-4" />
                           )}
                         </button>
+                        <button
+                          onClick={() => { setDeleteTarget(branch); setDeleteReason('') }}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -287,6 +324,21 @@ export default function BranchesPage() {
             ? 'bg-rbn-red hover:bg-rbn-red-dark text-white'
             : 'bg-green-600 hover:bg-green-700 text-white'
         }
+      />
+
+      {/* Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
+        onConfirm={handleDelete}
+        loading={saving}
+        title="Hapus Cabang"
+        description={`Yakin ingin menghapus cabang "${deleteTarget?.name}"? Jika cabang sudah memiliki transaksi, data tetap aman namun cabang tidak akan muncul di sistem.`}
+        confirmLabel="Hapus"
+        confirmClass="bg-red-600 hover:bg-red-700 text-white"
+        showReason
+        reason={deleteReason}
+        onReasonChange={setDeleteReason}
       />
     </div>
   )

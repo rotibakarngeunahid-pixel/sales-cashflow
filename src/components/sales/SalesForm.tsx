@@ -142,6 +142,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
         .from('branches')
         .select('*')
         .eq('is_active', true)
+        .is('deleted_at', null)
         .order('name')
       setBranches(data || [])
     }

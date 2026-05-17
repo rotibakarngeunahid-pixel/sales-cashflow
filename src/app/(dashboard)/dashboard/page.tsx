@@ -112,7 +112,7 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadBranches() {
       const supabase = createClient()
-      const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).order('name')
+      const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name')
       setBranches(data || [])
     }
     loadBranches()

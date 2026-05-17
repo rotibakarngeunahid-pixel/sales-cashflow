@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Plus, Eye, Pencil, CheckCircle, XCircle, Download,
-  FileSpreadsheet, RefreshCw
+  FileSpreadsheet, RefreshCw, Trash2
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { SalesReport, SalesStatus, Branch, Profile } from '@/types/database'
@@ -40,6 +40,9 @@ export default function SalesReportsPage() {
   const [detailReport, setDetailReport] = useState<SalesReport | null>(null)
   const [actionTarget, setActionTarget] = useState<{ report: SalesReport; type: ActionType } | null>(null)
   const [actioning, setActioning] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<SalesReport | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -66,7 +69,7 @@ export default function SalesReportsPage() {
     async function init() {
       const supabase = createClient()
       const [{ data: br }, { data: { user } }] = await Promise.all([
-        supabase.from('branches').select('id,name').eq('is_active', true).order('name'),
+        supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name'),
         supabase.auth.getUser(),
       ])
       setBranches(br || [])
@@ -103,6 +106,36 @@ export default function SalesReportsPage() {
 
     setActioning(false)
     setActionTarget(null)
+    load()
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const now = new Date().toISOString()
+
+    // Audit log sebelum hapus
+    await supabase.from('audit_logs').insert({
+      table_name: 'sales_reports',
+      record_id: deleteTarget.id,
+      action: 'sales_deleted',
+      old_data: deleteTarget as unknown as Record<string, unknown>,
+      new_data: { delete_reason: deleteReason || null } as Record<string, unknown>,
+      changed_by: user?.id ?? null,
+      changed_at: now,
+    })
+
+    // Hapus cashflow_transactions yang berasal dari laporan ini
+    await supabase.from('cashflow_transactions').delete().eq('source_id', deleteTarget.id)
+
+    // Hapus laporan penjualan
+    await supabase.from('sales_reports').delete().eq('id', deleteTarget.id)
+
+    setDeleting(false)
+    setDeleteTarget(null)
+    setDeleteReason('')
     load()
   }
 
@@ -278,6 +311,13 @@ export default function SalesReportsPage() {
                             <XCircle className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        <button
+                          onClick={() => { setDeleteTarget(report); setDeleteReason('') }}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -401,6 +441,21 @@ export default function SalesReportsPage() {
             ? 'bg-green-600 hover:bg-green-700 text-white'
             : 'bg-rbn-red hover:bg-rbn-red-dark text-white'
         }
+      />
+
+      {/* Delete Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
+        onConfirm={handleDelete}
+        loading={deleting}
+        title="Hapus Laporan Penjualan"
+        description={`Yakin ingin menghapus laporan ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Data cashflow yang terhubung juga akan ikut terhapus secara permanen.`}
+        confirmLabel="Hapus Permanen"
+        confirmClass="bg-red-600 hover:bg-red-700 text-white"
+        showReason
+        reason={deleteReason}
+        onReasonChange={setDeleteReason}
       />
     </div>
   )

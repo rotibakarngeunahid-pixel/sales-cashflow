@@ -21,6 +21,7 @@ export interface Branch {
   name: string
   address: string | null
   is_active: boolean
+  deleted_at: string | null
   created_at: string
   updated_at: string
 }
@@ -31,6 +32,7 @@ export interface CashflowCategory {
   default_type: CategoryDefaultType
   description: string | null
   is_active: boolean
+  deleted_at: string | null
   created_at: string
   updated_at: string
 }
@@ -141,6 +143,7 @@ export interface Database {
           name: string
           address: string | null
           is_active: boolean
+          deleted_at: string | null
           created_at: string
           updated_at: string
         }
@@ -148,11 +151,13 @@ export interface Database {
           name: string
           address?: string | null
           is_active?: boolean
+          deleted_at?: string | null
         }
         Update: {
           name?: string
           address?: string | null
           is_active?: boolean
+          deleted_at?: string | null
         }
         Relationships: []
       }
@@ -163,6 +168,7 @@ export interface Database {
           default_type: CategoryDefaultType
           description: string | null
           is_active: boolean
+          deleted_at: string | null
           created_at: string
           updated_at: string
         }
@@ -171,12 +177,14 @@ export interface Database {
           default_type: CategoryDefaultType
           description?: string | null
           is_active?: boolean
+          deleted_at?: string | null
         }
         Update: {
           name?: string
           default_type?: CategoryDefaultType
           description?: string | null
           is_active?: boolean
+          deleted_at?: string | null
         }
         Relationships: []
       }

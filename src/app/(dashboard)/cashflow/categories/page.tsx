@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, Pencil, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowCategory, CategoryDefaultType, Profile } from '@/types/database'
 import { categorySchema, type CategoryFormData } from '@/lib/validations/cashflow'
@@ -33,6 +33,8 @@ export default function CashflowCategoriesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editCategory, setEditCategory] = useState<CashflowCategory | null>(null)
   const [toggleTarget, setToggleTarget] = useState<CashflowCategory | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CashflowCategory | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   const [saving, setSaving] = useState(false)
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null)
 
@@ -42,7 +44,7 @@ export default function CashflowCategoriesPage() {
 
   const load = useCallback(async () => {
     const supabase = createClient()
-    let query = supabase.from('cashflow_categories').select('*').order('default_type').order('name')
+    let query = supabase.from('cashflow_categories').select('*').is('deleted_at', null).order('default_type').order('name')
     if (filterType) query = query.eq('default_type', filterType as CategoryDefaultType)
     if (filterActive !== '') query = query.eq('is_active', filterActive === 'true')
     const { data } = await query
@@ -131,6 +133,33 @@ export default function CashflowCategoriesPage() {
     load()
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setSaving(true)
+    const supabase = createClient()
+    const now = new Date().toISOString()
+
+    const { error } = await supabase.from('cashflow_categories').delete().eq('id', deleteTarget.id)
+    if (error) {
+      await supabase.from('cashflow_categories').update({ deleted_at: now }).eq('id', deleteTarget.id)
+    }
+
+    await supabase.from('audit_logs').insert({
+      table_name: 'cashflow_categories',
+      record_id: deleteTarget.id,
+      action: 'category_deleted',
+      old_data: deleteTarget as unknown as Record<string, unknown>,
+      new_data: { delete_reason: deleteReason || null, soft_deleted: !!error } as Record<string, unknown>,
+      changed_by: currentProfile?.id ?? null,
+      changed_at: now,
+    })
+
+    setSaving(false)
+    setDeleteTarget(null)
+    setDeleteReason('')
+    load()
+  }
+
   if (loading) return <PageLoading />
 
   return (
@@ -213,6 +242,13 @@ export default function CashflowCategoriesPage() {
                         >
                           {cat.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
                         </button>
+                        <button
+                          onClick={() => { setDeleteTarget(cat); setDeleteReason('') }}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -261,6 +297,20 @@ export default function CashflowCategoriesPage() {
         description={`Yakin ingin ${toggleTarget?.is_active ? 'menonaktifkan' : 'mengaktifkan'} kategori "${toggleTarget?.name}"?`}
         confirmLabel={toggleTarget?.is_active ? 'Nonaktifkan' : 'Aktifkan'}
         confirmClass={toggleTarget?.is_active ? 'bg-rbn-red hover:bg-rbn-red-dark text-white' : 'bg-green-600 hover:bg-green-700 text-white'}
+      />
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
+        onConfirm={handleDelete}
+        loading={saving}
+        title="Hapus Kategori"
+        description={`Yakin ingin menghapus kategori "${deleteTarget?.name}"? Jika kategori sudah dipakai di transaksi, data tetap aman namun kategori tidak akan muncul di sistem.`}
+        confirmLabel="Hapus"
+        confirmClass="bg-red-600 hover:bg-red-700 text-white"
+        showReason
+        reason={deleteReason}
+        onReasonChange={setDeleteReason}
       />
     </div>
   )

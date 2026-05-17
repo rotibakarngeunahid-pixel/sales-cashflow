@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info } from 'lucide-react'
+import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
@@ -33,6 +33,8 @@ export default function CashflowPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editTx, setEditTx] = useState<CashflowTransaction | null>(null)
   const [voidTarget, setVoidTarget] = useState<CashflowTransaction | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null)
+  const [deleteReason, setDeleteReason] = useState('')
   const [saving, setSaving] = useState(false)
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<CashflowFormData>({
@@ -67,8 +69,8 @@ export default function CashflowPage() {
     async function init() {
       const supabase = createClient()
       const [{ data: br }, { data: cat }, { data: { user } }] = await Promise.all([
-        supabase.from('branches').select('id,name').eq('is_active', true).order('name'),
-        supabase.from('cashflow_categories').select('id,name,default_type').eq('is_active', true).order('name'),
+        supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name'),
+        supabase.from('cashflow_categories').select('id,name,default_type').eq('is_active', true).is('deleted_at', null).order('name'),
         supabase.auth.getUser(),
       ])
       setBranches(br || [])
@@ -181,6 +183,31 @@ export default function CashflowPage() {
     load()
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setSaving(true)
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    const now = new Date().toISOString()
+
+    await supabase.from('audit_logs').insert({
+      table_name: 'cashflow_transactions',
+      record_id: deleteTarget.id,
+      action: 'cashflow_deleted',
+      old_data: deleteTarget as unknown as Record<string, unknown>,
+      new_data: { delete_reason: deleteReason || null } as Record<string, unknown>,
+      changed_by: user?.id ?? null,
+      changed_at: now,
+    })
+
+    await supabase.from('cashflow_transactions').delete().eq('id', deleteTarget.id)
+
+    setSaving(false)
+    setDeleteTarget(null)
+    setDeleteReason('')
+    load()
+  }
+
   const activeTx = transactions.filter((t) => t.status === 'active')
   const totalCashIn = activeTx.filter((t) => t.transaction_type === 'cash_in').reduce((a, t) => a + t.amount, 0)
   const totalCashOut = activeTx.filter((t) => t.transaction_type === 'cash_out').reduce((a, t) => a + t.amount, 0)
@@ -284,13 +311,24 @@ export default function CashflowPage() {
                     <td className="table-cell"><CashflowStatusBadge status={tx.status} /></td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
-                        {tx.source === 'manual' && tx.status === 'active' && (
+                        {tx.source === 'manual' && (
                           <>
-                            <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600">
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600">
-                              <XCircle className="w-3.5 h-3.5" />
+                            {tx.status === 'active' && (
+                              <>
+                                <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600" title="Void">
+                                  <XCircle className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                            <button
+                              onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
+                              className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </>
                         )}
@@ -367,6 +405,20 @@ export default function CashflowPage() {
         description={`Yakin ingin void transaksi "${voidTarget?.description || voidTarget?.category?.name}"? Transaksi tidak akan dihitung dalam laporan.`}
         confirmLabel="Void"
         confirmClass="bg-rbn-red hover:bg-rbn-red-dark text-white"
+      />
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
+        onConfirm={handleDelete}
+        loading={saving}
+        title="Hapus Transaksi"
+        description={`Yakin ingin menghapus transaksi "${deleteTarget?.description || deleteTarget?.category?.name}"? Data akan dihapus permanen dari sistem.`}
+        confirmLabel="Hapus Permanen"
+        confirmClass="bg-red-600 hover:bg-red-700 text-white"
+        showReason
+        reason={deleteReason}
+        onReasonChange={setDeleteReason}
       />
     </div>
   )
