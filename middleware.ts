@@ -23,6 +23,7 @@ export async function middleware(request: NextRequest) {
     }
   )
 
+  // Refresh session — reads from cookie, no extra network call
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -30,9 +31,13 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
 
   // Public routes
-  if (pathname.startsWith('/login') || pathname.startsWith('/_next') || pathname === '/favicon.ico') {
+  if (
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/_next') ||
+    pathname === '/favicon.ico'
+  ) {
     if (user && pathname === '/login') {
-      return NextResponse.redirect(new URL('/', request.url))
+      return NextResponse.redirect(new URL('/dashboard', request.url))
     }
     return supabaseResponse
   }
@@ -42,16 +47,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Check if user is active
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_active, role')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile || !profile.is_active) {
-    await supabase.auth.signOut()
-    return NextResponse.redirect(new URL('/login?error=inactive', request.url))
+  // Root redirect
+  if (pathname === '/') {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   return supabaseResponse

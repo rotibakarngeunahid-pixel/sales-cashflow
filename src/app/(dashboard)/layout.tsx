@@ -42,6 +42,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         .select('*')
         .eq('id', user.id)
         .single()
+      if (!data || !data.is_active) {
+        await supabase.auth.signOut()
+        router.push('/login?error=inactive')
+        return
+      }
       setProfile(data)
     }
     loadProfile()
