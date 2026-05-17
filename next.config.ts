@@ -6,7 +6,10 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost:3000"],
+      allowedOrigins: [
+        "localhost:3000",
+        "rbn-sales-cashflow.vercel.app",
+      ],
     },
   },
 };
