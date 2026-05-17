@@ -306,7 +306,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           title="GoFood"
           expanded={showGofood}
           onToggle={() => setShowGofood(!showGofood)}
-          badge={calcs && calcs.gofood_nett > 0 ? formatRupiah(Number(watchedValues.gofood_nett) || 0) : undefined}
+          badge={calcs && Number(watchedValues.gofood_nett) > 0 ? formatRupiah(Number(watchedValues.gofood_nett) || 0) : undefined}
         />
         {showGofood && (
           <div className="grid grid-cols-2 gap-3 mt-3">

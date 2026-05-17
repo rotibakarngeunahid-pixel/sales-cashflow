@@ -39,7 +39,7 @@ export interface SalesReport {
   id: string
   report_date: string
   branch_id: string
-  branch?: Branch
+  branch?: Pick<Branch, 'id' | 'name'> | null
   cash: number
   qris: number
   gofood_gross: number
@@ -75,10 +75,10 @@ export interface CashflowTransaction {
   id: string
   transaction_date: string
   branch_id: string
-  branch?: Branch
+  branch?: Pick<Branch, 'id' | 'name'> | null
   transaction_type: CashflowType
   category_id: string | null
-  category?: CashflowCategory
+  category?: Pick<CashflowCategory, 'id' | 'name'> | null
   description: string | null
   cash_in: number
   cash_out: number
@@ -101,7 +101,7 @@ export interface AuditLog {
   new_data: Record<string, unknown> | null
   changed_by: string | null
   changed_at: string
-  changer?: Profile
+  changer?: Pick<Profile, 'full_name' | 'email'> | null
 }
 
 export interface Database {
@@ -271,7 +271,29 @@ export interface Database {
           created_by?: string | null
           updated_by?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'sales_reports_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'sales_reports_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'sales_reports_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
       }
       cashflow_transactions: {
         Row: {
@@ -322,7 +344,36 @@ export interface Database {
           created_by?: string | null
           updated_by?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'cashflow_transactions_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_transactions_category_id_fkey'
+            columns: ['category_id']
+            isOneToOne: false
+            referencedRelation: 'cashflow_categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_transactions_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_transactions_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
       }
       audit_logs: {
         Row: {
@@ -345,7 +396,15 @@ export interface Database {
           changed_by?: string | null
         }
         Update: never
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: 'audit_logs_changed_by_fkey'
+            columns: ['changed_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
       }
     }
     Views: {

@@ -7,7 +7,7 @@ import {
   FileSpreadsheet, RefreshCw
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { SalesReport, Branch, Profile } from '@/types/database'
+import type { SalesReport, SalesStatus, Branch, Profile } from '@/types/database'
 import { formatDate, formatRupiah } from '@/lib/utils/format'
 import { exportSalesToExcel, exportSalesToCSV } from '@/lib/utils/export'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
@@ -23,7 +23,7 @@ type ActionType = 'post' | 'void'
 export default function SalesReportsPage() {
   const router = useRouter()
   const [reports, setReports] = useState<SalesReport[]>([])
-  const [branches, setBranches] = useState<Branch[]>([])
+  const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
 
@@ -53,7 +53,7 @@ export default function SalesReportsPage() {
       .order('created_at', { ascending: false })
 
     if (filterBranch) query = query.eq('branch_id', filterBranch)
-    if (filterStatus) query = query.eq('status', filterStatus)
+    if (filterStatus) query = query.eq('status', filterStatus as SalesStatus)
 
     const { data } = await query
     setReports(data || [])
@@ -83,7 +83,7 @@ export default function SalesReportsPage() {
     setActioning(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    const newStatus = actionTarget.type === 'post' ? 'posted' : 'void'
+    const newStatus: SalesStatus = actionTarget.type === 'post' ? 'posted' : 'void'
     const oldReport = actionTarget.report
 
     await supabase.from('sales_reports')

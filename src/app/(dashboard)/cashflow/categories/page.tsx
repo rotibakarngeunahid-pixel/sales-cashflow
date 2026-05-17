@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Pencil, ToggleLeft, ToggleRight } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { CashflowCategory, Profile } from '@/types/database'
+import type { CashflowCategory, CategoryDefaultType, Profile } from '@/types/database'
 import { categorySchema, type CategoryFormData } from '@/lib/validations/cashflow'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -43,7 +43,7 @@ export default function CashflowCategoriesPage() {
   const load = useCallback(async () => {
     const supabase = createClient()
     let query = supabase.from('cashflow_categories').select('*').order('default_type').order('name')
-    if (filterType) query = query.eq('default_type', filterType)
+    if (filterType) query = query.eq('default_type', filterType as CategoryDefaultType)
     if (filterActive !== '') query = query.eq('is_active', filterActive === 'true')
     const { data } = await query
     setCategories(data || [])

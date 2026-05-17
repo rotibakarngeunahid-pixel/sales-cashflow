@@ -46,7 +46,7 @@ const actionColors: Record<string, string> = {
 }
 
 export default function AuditLogPage() {
-  const [logs, setLogs] = useState<(AuditLog & { changer?: { full_name: string | null; email: string | null } })[]>([])
+  const [logs, setLogs] = useState<AuditLog[]>([])
   const [loading, setLoading] = useState(true)
   const [filterAction, setFilterAction] = useState('')
   const [detailLog, setDetailLog] = useState<AuditLog | null>(null)

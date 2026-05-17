@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { CashflowTransaction, Branch, CashflowCategory, Profile } from '@/types/database'
+import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import { exportCashflowToExcel } from '@/lib/utils/export'
 import { cashflowSchema, type CashflowFormData } from '@/lib/validations/cashflow'
@@ -18,8 +18,8 @@ import { format, startOfMonth, endOfMonth } from 'date-fns'
 
 export default function CashflowPage() {
   const [transactions, setTransactions] = useState<CashflowTransaction[]>([])
-  const [branches, setBranches] = useState<Branch[]>([])
-  const [categories, setCategories] = useState<CashflowCategory[]>([])
+  const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
+  const [categories, setCategories] = useState<Pick<CashflowCategory, 'id' | 'name' | 'default_type'>[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
 
@@ -53,7 +53,7 @@ export default function CashflowPage() {
       .order('created_at', { ascending: false })
 
     if (filterBranch) query = query.eq('branch_id', filterBranch)
-    if (filterType) query = query.eq('transaction_type', filterType)
+    if (filterType) query = query.eq('transaction_type', filterType as CashflowType)
     if (filterCat) query = query.eq('category_id', filterCat)
 
     const { data } = await query
@@ -166,7 +166,7 @@ export default function CashflowPage() {
     setSaving(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('cashflow_transactions').update({ status: 'void', updated_by: user?.id ?? null }).eq('id', voidTarget.id)
+    await supabase.from('cashflow_transactions').update({ status: 'void' as const, updated_by: user?.id ?? null }).eq('id', voidTarget.id)
     await supabase.from('audit_logs').insert({
       table_name: 'cashflow_transactions',
       record_id: voidTarget.id,

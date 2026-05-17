@@ -31,7 +31,7 @@ export default function DashboardPage() {
   const [startDate, setStartDate] = useState(format(startOfMonth(today), 'yyyy-MM-dd'))
   const [endDate, setEndDate] = useState(format(endOfMonth(today), 'yyyy-MM-dd'))
   const [filterBranch, setFilterBranch] = useState('')
-  const [branches, setBranches] = useState<Branch[]>([])
+  const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [sales, setSales] = useState<SalesReport[]>([])
   const [cashflow, setCashflow] = useState<CashflowTransaction[]>([])
   const [loading, setLoading] = useState(true)
