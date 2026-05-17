@@ -23,40 +23,29 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // Refresh session — reads from cookie, no extra network call
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  // Use getSession (reads cookie locally, zero network latency)
+  // Sufficient for an internal admin app
+  const { data: { session } } = await supabase.auth.getSession()
 
   const pathname = request.nextUrl.pathname
 
-  // Public routes
-  if (
-    pathname.startsWith('/login') ||
-    pathname.startsWith('/_next') ||
-    pathname === '/favicon.ico'
-  ) {
-    if (user && pathname === '/login') {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-    return supabaseResponse
-  }
-
-  // Protected routes — redirect to login if not authenticated
-  if (!user) {
+  if (pathname === '/') {
+    if (session) return NextResponse.redirect(new URL('/dashboard', request.url))
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Root redirect
-  if (pathname === '/') {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
+  if (pathname.startsWith('/login')) {
+    if (session) return NextResponse.redirect(new URL('/dashboard', request.url))
+    return supabaseResponse
+  }
+
+  if (!session) {
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
   return supabaseResponse
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }

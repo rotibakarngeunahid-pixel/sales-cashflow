@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import {
@@ -81,7 +80,6 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
 
   return (
     <>
-      {/* Mobile overlay */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
@@ -98,13 +96,9 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
           'bg-white border-r border-slate-200 shadow-xl shadow-slate-900/5'
         )}
       >
-        {/* Logo / Brand */}
+        {/* Logo */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-slate-100">
-          <Link
-            href="/dashboard"
-            onClick={onClose}
-            className="flex items-center gap-3 min-w-0 group"
-          >
+          <a href="/dashboard" className="flex items-center gap-3 min-w-0 group">
             <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 ring-2 ring-orange-100 group-hover:ring-orange-300 transition-all shadow-sm">
               <Image
                 src={LOGO_URL}
@@ -122,7 +116,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
               <p className="text-sm font-black text-slate-900 tracking-tight">Roti Bakar</p>
               <p className="text-xs font-extrabold text-rbn-red tracking-widest uppercase">Ngeunah</p>
             </div>
-          </Link>
+          </a>
           <button
             onClick={onClose}
             className="lg:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
@@ -149,9 +143,8 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
 
                     return (
                       <li key={item.href}>
-                        <Link
+                        <a
                           href={item.href}
-                          onClick={onClose}
                           aria-current={isActive ? 'page' : undefined}
                           className={cn(
                             'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all group',
@@ -170,7 +163,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
                           {isActive && (
                             <ChevronRight className="w-3.5 h-3.5 text-white/70 flex-shrink-0" />
                           )}
-                        </Link>
+                        </a>
                       </li>
                     )
                   })}
