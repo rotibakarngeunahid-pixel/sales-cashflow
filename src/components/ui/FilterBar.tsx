@@ -1,6 +1,6 @@
 'use client'
 
-import { Search, Filter } from 'lucide-react'
+import { Search } from 'lucide-react'
 
 interface FilterBarProps {
   search?: string
@@ -18,7 +18,7 @@ export default function FilterBar({
   return (
     <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
       {onSearchChange && (
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative w-full sm:flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"
@@ -29,7 +29,7 @@ export default function FilterBar({
           />
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
         {children}
       </div>
     </div>
@@ -48,7 +48,7 @@ export function SelectFilter({ value, onChange, options, placeholder = 'Semua' }
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white text-gray-700"
+      className="w-full sm:w-auto px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white text-gray-700"
     >
       <option value="">{placeholder}</option>
       {options.map((opt) => (
@@ -69,19 +69,19 @@ interface DateRangeFilterProps {
 
 export function DateRangeFilter({ startDate, endDate, onStartChange, onEndChange }: DateRangeFilterProps) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-[1fr_auto_1fr] sm:items-center">
       <input
         type="date"
         value={startDate}
         onChange={(e) => onStartChange(e.target.value)}
-        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white"
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white"
       />
-      <span className="text-gray-400 text-sm">—</span>
+      <span className="hidden text-center text-gray-400 text-sm sm:block">-</span>
       <input
         type="date"
         value={endDate}
         onChange={(e) => onEndChange(e.target.value)}
-        className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white"
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red bg-white"
       />
     </div>
   )

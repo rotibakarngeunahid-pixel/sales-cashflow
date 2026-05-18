@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Plus, Eye, Pencil, CheckCircle, XCircle, Download,
+  Plus, Eye, Pencil, CheckCircle, XCircle,
   FileSpreadsheet, RefreshCw, Trash2, CheckCircle2, X
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { SalesReport, SalesStatus, Branch, Profile } from '@/types/database'
 import { formatDate, formatRupiah } from '@/lib/utils/format'
-import { exportSalesToExcel, exportSalesToCSV } from '@/lib/utils/export'
+import { exportSalesToExcel } from '@/lib/utils/export'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
 import { SalesBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
@@ -71,6 +71,11 @@ export default function SalesReportsPage() {
   const [deleteTarget, setDeleteTarget] = useState<SalesReport | null>(null)
   const [deleteReason, setDeleteReason] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const isOwner = profile?.role === 'owner'
+
+  const canDeleteSales = useCallback((report: SalesReport) => (
+    isOwner && ['draft', 'submitted', 'void'].includes(report.status)
+  ), [isOwner])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -151,12 +156,20 @@ export default function SalesReportsPage() {
 
   async function handleDelete() {
     if (!deleteTarget) return
+    if (!isOwner) {
+      toastTimerRef('Hanya owner yang dapat menghapus laporan permanen.', 'error')
+      setDeleteTarget(null)
+      setDeleteReason('')
+      return
+    }
+
     setDeleting(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     const now = new Date().toISOString()
+    const isVoidDelete = deleteTarget.status === 'void'
 
-    await supabase.from('audit_logs').insert({
+    const { error: auditError } = await supabase.from('audit_logs').insert({
       table_name: 'sales_reports',
       record_id: deleteTarget.id,
       action: 'sales_deleted',
@@ -166,7 +179,23 @@ export default function SalesReportsPage() {
       changed_at: now,
     })
 
-    await supabase.from('cashflow_transactions').delete().eq('source_id', deleteTarget.id)
+    if (auditError) {
+      toastTimerRef(`Gagal mencatat audit log: ${auditError.message}`, 'error')
+      setDeleting(false)
+      return
+    }
+
+    const { error: cashflowDeleteError } = await supabase
+      .from('cashflow_transactions')
+      .delete()
+      .eq('source', 'sales')
+      .eq('source_id', deleteTarget.id)
+
+    if (cashflowDeleteError) {
+      toastTimerRef(`Gagal menghapus cashflow terkait: ${cashflowDeleteError.message}`, 'error')
+      setDeleting(false)
+      return
+    }
 
     const { error: deleteError } = await supabase.from('sales_reports').delete().eq('id', deleteTarget.id)
 
@@ -181,7 +210,7 @@ export default function SalesReportsPage() {
     setDeleting(false)
     setDeleteTarget(null)
     setDeleteReason('')
-    toastTimerRef('Draft berhasil dihapus.', 'success')
+    toastTimerRef(isVoidDelete ? 'Laporan void berhasil dihapus permanen.' : 'Laporan penjualan berhasil dihapus permanen.', 'success')
     load()
   }
 
@@ -213,17 +242,17 @@ export default function SalesReportsPage() {
           <h2 className="text-xl font-bold text-gray-900">Laporan Penjualan</h2>
           <p className="text-sm text-gray-500 mt-0.5">{reports.length} laporan ditemukan</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <button
             onClick={() => exportSalesToExcel(reports)}
-            className="btn-outline flex items-center gap-1.5 text-sm"
+            className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span className="hidden sm:inline">Export Excel</span>
           </button>
           <button
             onClick={() => router.push('/sales/input')}
-            className="btn-primary flex items-center gap-2"
+            className="btn-primary flex w-full items-center gap-2 sm:w-auto"
           >
             <Plus className="w-4 h-4" />
             <span>Input Penjualan</span>
@@ -257,7 +286,7 @@ export default function SalesReportsPage() {
               { value: 'void', label: 'Void' },
             ]}
           />
-          <button onClick={load} className="btn-outline flex items-center gap-1.5 text-sm">
+          <button onClick={load} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh</span>
           </button>
@@ -265,7 +294,7 @@ export default function SalesReportsPage() {
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="card p-3 text-center">
           <p className="text-xs text-gray-500 mb-0.5">Total Offline</p>
           <p className="text-base font-bold text-gray-900 text-rupiah">{formatRupiah(totals.offline)}</p>
@@ -295,37 +324,28 @@ export default function SalesReportsPage() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <>
+          <div className="hidden md:block">
+            <table className="w-full table-fixed">
               <thead>
                 <tr>
-                  <th className="table-header">Tanggal</th>
-                  <th className="table-header">Cabang</th>
-                  <th className="table-header text-right">Cash</th>
-                  <th className="table-header text-right">QRIS</th>
-                  <th className="table-header text-right">GoFood</th>
-                  <th className="table-header text-right">GrabFood</th>
-                  <th className="table-header text-right">Shopee</th>
+                  <th className="table-header w-[12%]">Tanggal</th>
+                  <th className="table-header w-[16%]">Cabang</th>
                   <th className="table-header text-right">Offline</th>
                   <th className="table-header text-right">Online Nett</th>
                   <th className="table-header text-right">Grand Total</th>
-                  <th className="table-header text-center">Status</th>
-                  <th className="table-header text-right">Aksi</th>
+                  <th className="table-header w-[11%] text-center">Status</th>
+                  <th className="table-header w-[16%] text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {reports.map((report) => (
                   <tr key={report.id} className="hover:bg-gray-50 transition-colors">
                     <td className="table-cell font-medium">{formatDate(report.report_date, 'dd/MM/yy')}</td>
-                    <td className="table-cell">{report.branch?.name || '—'}</td>
-                    <td className="table-cell text-right text-rupiah">{formatRupiah(report.cash)}</td>
-                    <td className="table-cell text-right text-rupiah">{formatRupiah(report.qris)}</td>
-                    <td className="table-cell text-right text-rupiah">{formatRupiah(report.gofood_nett)}</td>
-                    <td className="table-cell text-right text-rupiah">{formatRupiah(report.grabfood_nett)}</td>
-                    <td className="table-cell text-right text-rupiah">{formatRupiah(report.shopeefood_nett)}</td>
-                    <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(report.total_offline)}</td>
-                    <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(report.total_online_nett)}</td>
-                    <td className="table-cell text-right font-bold text-rbn-red text-rupiah">{formatRupiah(report.grand_total_nett_sales)}</td>
+                    <td className="table-cell"><div className="truncate">{report.branch?.name || '-'}</div></td>
+                    <td className="table-cell text-right font-medium text-rupiah"><div className="truncate">{formatRupiah(report.total_offline)}</div></td>
+                    <td className="table-cell text-right font-medium text-rupiah"><div className="truncate">{formatRupiah(report.total_online_nett)}</div></td>
+                    <td className="table-cell text-right font-bold text-rbn-red text-rupiah"><div className="truncate">{formatRupiah(report.grand_total_nett_sales)}</div></td>
                     <td className="table-cell text-center">
                       <SalesBadge status={report.status} />
                     </td>
@@ -374,11 +394,11 @@ export default function SalesReportsPage() {
                         )}
 
                         {/* Hapus Draft — hard delete, only for draft/submitted */}
-                        {(report.status === 'draft' || report.status === 'submitted') && (
+                        {canDeleteSales(report) && (
                           <button
                             onClick={() => { setDeleteTarget(report); setDeleteReason('') }}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
-                            title="Hapus Draft"
+                            title={report.status === 'void' ? 'Hapus Laporan Void' : 'Hapus Laporan'}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -390,6 +410,81 @@ export default function SalesReportsPage() {
               </tbody>
             </table>
           </div>
+          <div className="space-y-3 p-3 md:hidden">
+            {reports.map((report) => (
+              <article key={report.id} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">{formatDate(report.report_date, 'dd MMM yyyy')}</p>
+                    <p className="truncate text-xs text-slate-500">{report.branch?.name || '-'}</p>
+                  </div>
+                  <SalesBadge status={report.status} />
+                </div>
+
+                <div className="mt-3 rounded-lg bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Grand Total</p>
+                  <p className="break-words text-xl font-bold text-rbn-red text-rupiah">{formatRupiah(report.grand_total_nett_sales)}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-500">Offline</p>
+                      <p className="break-words font-semibold text-slate-900 text-rupiah">{formatRupiah(report.total_offline)}</p>
+                    </div>
+                    <div className="min-w-0 text-right">
+                      <p className="text-xs text-slate-500">Online Nett</p>
+                      <p className="break-words font-semibold text-slate-900 text-rupiah">{formatRupiah(report.total_online_nett)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
+                  <button
+                    onClick={() => setDetailReport(report)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                    title="Lihat Detail"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  {report.status !== 'void' && (
+                    <button
+                      onClick={() => { setEditReport(report); setEditModalOpen(true) }}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-blue-600"
+                      title="Edit"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )}
+                  {(report.status === 'draft' || report.status === 'submitted') && (
+                    <button
+                      onClick={() => setActionTarget({ report, type: 'post' })}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-green-50 hover:text-green-600"
+                      title="Post (Finalisasi)"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                    </button>
+                  )}
+                  {report.status !== 'void' && (
+                    <button
+                      onClick={() => setActionTarget({ report, type: 'void' })}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                      title="Void"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  )}
+                  {canDeleteSales(report) && (
+                    <button
+                      onClick={() => { setDeleteTarget(report); setDeleteReason('') }}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                      title={report.status === 'void' ? 'Hapus Laporan Void' : 'Hapus Laporan'}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+          </>
         )}
       </div>
 
@@ -518,8 +613,12 @@ export default function SalesReportsPage() {
         onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
         onConfirm={handleDelete}
         loading={deleting}
-        title="Hapus Draft Penjualan"
-        description={`Yakin ingin menghapus laporan ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Data akan dihapus permanen dan tidak bisa dikembalikan.`}
+        title={deleteTarget?.status === 'void' ? 'Hapus Permanen Laporan Void' : 'Hapus Laporan Penjualan'}
+        description={
+          deleteTarget?.status === 'void'
+            ? `Yakin ingin menghapus permanen laporan void ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Cashflow dari sales terkait juga akan dihapus dan data tidak bisa dikembalikan.`
+            : `Yakin ingin menghapus laporan ${deleteTarget?.branch?.name} tanggal ${formatDate(deleteTarget?.report_date || '')}? Data akan dihapus permanen dan tidak bisa dikembalikan.`
+        }
         confirmLabel="Hapus Permanen"
         confirmClass="bg-red-600 hover:bg-red-700 text-white"
         showReason

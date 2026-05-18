@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2 } from 'lucide-react'
+import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
@@ -14,18 +14,73 @@ import { CashflowTypeBadge, CashflowStatusBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
-import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { format, startOfMonth } from 'date-fns'
+
+type CashPosition = {
+  branchId: string
+  branchName: string
+  cashIn: number
+  cashOut: number
+  balance: number
+}
+
+type CashPositionRow = {
+  branch_id: string
+  cash_in: number | null
+  cash_out: number | null
+  branch?: Pick<Branch, 'id' | 'name'> | null
+}
+
+function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
+  return (
+    <div
+      className={`fixed top-4 right-4 z-[100] flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${
+        type === 'success'
+          ? 'bg-emerald-600 text-white'
+          : 'bg-red-600 text-white'
+      }`}
+    >
+      {type === 'success'
+        ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+        : <XCircle className="w-4 h-4 flex-shrink-0" />
+      }
+      <span>{message}</span>
+      <button onClick={onClose} className="ml-1 opacity-70 hover:opacity-100">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
+function getNominalAmount(tx: CashflowTransaction) {
+  return tx.transaction_type === 'cash_in'
+    ? tx.cash_in || tx.amount
+    : tx.cash_out || tx.amount
+}
+
+function getNominalLabel(tx: CashflowTransaction) {
+  const prefix = tx.transaction_type === 'cash_out' ? '-' : ''
+  return `${prefix}${formatRupiah(getNominalAmount(tx))}`
+}
 
 export default function CashflowPage() {
   const [transactions, setTransactions] = useState<CashflowTransaction[]>([])
+  const [cashPositions, setCashPositions] = useState<CashPosition[]>([])
   const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [categories, setCategories] = useState<Pick<CashflowCategory, 'id' | 'name' | 'default_type'>[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const isOwner = profile?.role === 'owner'
+
+  const toastTimerRef = useCallback((msg: string, type: 'success' | 'error') => {
+    setToast({ message: msg, type })
+    setTimeout(() => setToast(null), 4000)
+  }, [])
 
   const today = new Date()
   const [startDate, setStartDate] = useState(format(startOfMonth(today), 'yyyy-MM-dd'))
-  const [endDate, setEndDate] = useState(format(endOfMonth(today), 'yyyy-MM-dd'))
+  const [endDate, setEndDate] = useState(format(today, 'yyyy-MM-dd'))
   const [filterBranch, setFilterBranch] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterCat, setFilterCat] = useState('')
@@ -36,6 +91,9 @@ export default function CashflowPage() {
   const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null)
   const [deleteReason, setDeleteReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const canDeleteCashflow = useCallback((tx: CashflowTransaction) => (
+    isOwner && tx.source === 'manual' && tx.status === 'void'
+  ), [isOwner])
 
   const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<CashflowFormData>({
     resolver: zodResolver(cashflowSchema),
@@ -64,6 +122,65 @@ export default function CashflowPage() {
   }, [startDate, endDate, filterBranch, filterType, filterCat])
 
   useEffect(() => { load() }, [load])
+
+  const loadCashPositions = useCallback(async () => {
+    const supabase = createClient()
+    let query = supabase
+      .from('cashflow_transactions')
+      .select('branch_id,cash_in,cash_out,branch:branches(id,name)')
+      .eq('status', 'active')
+      .lte('transaction_date', endDate)
+
+    if (filterBranch) query = query.eq('branch_id', filterBranch)
+
+    const { data, error } = await query
+
+    if (error) {
+      toastTimerRef(`Gagal memuat posisi kas: ${error.message}`, 'error')
+      setCashPositions([])
+      return
+    }
+
+    const rows = (data || []) as unknown as CashPositionRow[]
+    const positions = new Map<string, Omit<CashPosition, 'balance'>>()
+    const visibleBranches = filterBranch
+      ? branches.filter((branch) => branch.id === filterBranch)
+      : branches
+
+    visibleBranches.forEach((branch) => {
+      positions.set(branch.id, {
+        branchId: branch.id,
+        branchName: branch.name,
+        cashIn: 0,
+        cashOut: 0,
+      })
+    })
+
+    rows.forEach((row) => {
+      const branchId = row.branch_id
+      const existing = positions.get(branchId) ?? {
+        branchId,
+        branchName: row.branch?.name || 'Cabang',
+        cashIn: 0,
+        cashOut: 0,
+      }
+
+      existing.cashIn += row.cash_in || 0
+      existing.cashOut += row.cash_out || 0
+      positions.set(branchId, existing)
+    })
+
+    setCashPositions(
+      Array.from(positions.values())
+        .map((position) => ({
+          ...position,
+          balance: position.cashIn - position.cashOut,
+        }))
+        .sort((a, b) => a.branchName.localeCompare(b.branchName))
+    )
+  }, [branches, endDate, filterBranch, toastTimerRef])
+
+  useEffect(() => { loadCashPositions() }, [loadCashPositions])
 
   useEffect(() => {
     async function init() {
@@ -129,7 +246,12 @@ export default function CashflowPage() {
     }
 
     if (editTx) {
-      await supabase.from('cashflow_transactions').update(payload).eq('id', editTx.id)
+      const { error: updateError } = await supabase.from('cashflow_transactions').update(payload).eq('id', editTx.id)
+      if (updateError) {
+        toastTimerRef(`Gagal menyimpan transaksi: ${updateError.message}`, 'error')
+        setSaving(false)
+        return
+      }
       await supabase.from('audit_logs').insert({
         table_name: 'cashflow_transactions',
         record_id: editTx.id,
@@ -140,11 +262,16 @@ export default function CashflowPage() {
         changed_at: new Date().toISOString(),
       })
     } else {
-      const { data: newTx } = await supabase
+      const { data: newTx, error: insertError } = await supabase
         .from('cashflow_transactions')
         .insert({ ...payload, status: 'active', created_by: user?.id ?? null })
         .select()
         .single()
+      if (insertError) {
+        toastTimerRef(`Gagal menambah transaksi: ${insertError.message}`, 'error')
+        setSaving(false)
+        return
+      }
       if (newTx) {
         await supabase.from('audit_logs').insert({
           table_name: 'cashflow_transactions',
@@ -160,7 +287,9 @@ export default function CashflowPage() {
 
     setSaving(false)
     setModalOpen(false)
+    toastTimerRef(editTx ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil ditambahkan.', 'success')
     load()
+    loadCashPositions()
   }
 
   async function handleVoid() {
@@ -168,7 +297,18 @@ export default function CashflowPage() {
     setSaving(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('cashflow_transactions').update({ status: 'void' as const, updated_by: user?.id ?? null }).eq('id', voidTarget.id)
+    const { error: voidError } = await supabase
+      .from('cashflow_transactions')
+      .update({ status: 'void' as const, updated_by: user?.id ?? null })
+      .eq('id', voidTarget.id)
+
+    if (voidError) {
+      toastTimerRef(`Gagal void transaksi: ${voidError.message}`, 'error')
+      setSaving(false)
+      setVoidTarget(null)
+      return
+    }
+
     await supabase.from('audit_logs').insert({
       table_name: 'cashflow_transactions',
       record_id: voidTarget.id,
@@ -180,17 +320,32 @@ export default function CashflowPage() {
     })
     setSaving(false)
     setVoidTarget(null)
+    toastTimerRef('Transaksi berhasil divoid.', 'success')
     load()
+    loadCashPositions()
   }
 
   async function handleDelete() {
     if (!deleteTarget) return
+    if (!isOwner) {
+      toastTimerRef('Hanya owner yang dapat menghapus transaksi permanen.', 'error')
+      setDeleteTarget(null)
+      setDeleteReason('')
+      return
+    }
+    if (deleteTarget.source !== 'manual' || deleteTarget.status !== 'void') {
+      toastTimerRef('Hanya transaksi manual yang sudah void dapat dihapus dari halaman cashflow.', 'error')
+      setDeleteTarget(null)
+      setDeleteReason('')
+      return
+    }
+
     setSaving(true)
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     const now = new Date().toISOString()
 
-    await supabase.from('audit_logs').insert({
+    const { error: auditError } = await supabase.from('audit_logs').insert({
       table_name: 'cashflow_transactions',
       record_id: deleteTarget.id,
       action: 'cashflow_deleted',
@@ -200,12 +355,29 @@ export default function CashflowPage() {
       changed_at: now,
     })
 
-    await supabase.from('cashflow_transactions').delete().eq('id', deleteTarget.id)
+    if (auditError) {
+      toastTimerRef(`Gagal mencatat audit log: ${auditError.message}`, 'error')
+      setSaving(false)
+      return
+    }
+
+    const { error: deleteError } = await supabase
+      .from('cashflow_transactions')
+      .delete()
+      .eq('id', deleteTarget.id)
+
+    if (deleteError) {
+      toastTimerRef(`Gagal menghapus transaksi: ${deleteError.message}`, 'error')
+      setSaving(false)
+      return
+    }
 
     setSaving(false)
     setDeleteTarget(null)
     setDeleteReason('')
+    toastTimerRef('Transaksi void berhasil dihapus permanen.', 'success')
     load()
+    loadCashPositions()
   }
 
   const activeTx = transactions.filter((t) => t.status === 'active')
@@ -219,18 +391,29 @@ export default function CashflowPage() {
 
   return (
     <div className="space-y-4">
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
         <div>
           <h2 className="text-xl font-bold text-gray-900">Cashflow</h2>
           <p className="text-sm text-gray-500">{transactions.length} transaksi</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => exportCashflowToExcel(transactions)} className="btn-outline flex items-center gap-1.5 text-sm">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <button
+            onClick={() => exportCashflowToExcel(transactions, { cashPositions, positionAsOfDate: endDate })}
+            className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
+          >
             <FileSpreadsheet className="w-4 h-4" />
             <span className="hidden sm:inline">Export</span>
           </button>
-          <button onClick={openAdd} className="btn-primary flex items-center gap-2">
+          <button onClick={openAdd} className="btn-primary flex w-full items-center gap-2 sm:w-auto">
             <Plus className="w-4 h-4" /> Tambah Transaksi
           </button>
         </div>
@@ -242,14 +425,15 @@ export default function CashflowPage() {
           <DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} />
           <SelectFilter value={filterBranch} onChange={setFilterBranch} placeholder="Semua Cabang" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
           <SelectFilter value={filterType} onChange={setFilterType} placeholder="Semua Tipe" options={[{ value: 'cash_in', label: 'Cash In' }, { value: 'cash_out', label: 'Cash Out' }]} />
-          <button onClick={load} className="btn-outline flex items-center gap-1.5 text-sm">
+          <SelectFilter value={filterCat} onChange={setFilterCat} placeholder="Semua Kategori" options={categories.map((c) => ({ value: c.id, label: c.name }))} />
+          <button onClick={() => { load(); loadCashPositions() }} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
         </div>
       </div>
 
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div className="card p-3 text-center border-l-4 border-emerald-500">
           <p className="text-xs text-gray-500 mb-0.5">Total Cash In</p>
           <p className="text-base font-bold text-emerald-600 text-rupiah">{formatRupiah(totalCashIn)}</p>
@@ -264,40 +448,103 @@ export default function CashflowPage() {
         </div>
       </div>
 
+      {/* Cash Position */}
+      <section className="card overflow-hidden">
+        <div className="flex flex-col gap-1 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Posisi Kas Saat Ini</h3>
+            <p className="text-xs text-slate-500">Posisi sampai {formatDate(endDate)} berdasarkan cashflow aktif.</p>
+          </div>
+          <span className="text-xs font-medium text-slate-500">{cashPositions.length} cabang</span>
+        </div>
+
+        {cashPositions.length === 0 ? (
+          <div className="p-4 text-sm text-slate-500">Belum ada cabang aktif untuk filter ini.</div>
+        ) : (
+          <>
+            <div className="hidden md:block">
+              <table className="w-full table-fixed">
+                <thead>
+                  <tr>
+                    <th className="table-header">Cabang</th>
+                    <th className="table-header text-right">Cash In</th>
+                    <th className="table-header text-right">Cash Out</th>
+                    <th className="table-header text-right">Posisi Kas</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {cashPositions.map((position) => (
+                    <tr key={position.branchId}>
+                      <td className="table-cell font-medium"><div className="truncate">{position.branchName}</div></td>
+                      <td className="table-cell text-right font-medium text-emerald-600 text-rupiah"><div className="truncate">{formatRupiah(position.cashIn)}</div></td>
+                      <td className="table-cell text-right font-medium text-red-600 text-rupiah"><div className="truncate">{formatRupiah(position.cashOut)}</div></td>
+                      <td className={`table-cell text-right font-bold text-rupiah ${position.balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                        <div className="truncate">{formatRupiah(position.balance)}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 md:hidden">
+              {cashPositions.map((position) => (
+                <article key={position.branchId} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                  <p className="truncate text-sm font-semibold text-slate-900">{position.branchName}</p>
+                  <p className={`mt-2 break-words text-xl font-bold text-rupiah ${position.balance >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
+                    {formatRupiah(position.balance)}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-500">Cash In</p>
+                      <p className="break-words font-semibold text-emerald-600 text-rupiah">{formatRupiah(position.cashIn)}</p>
+                    </div>
+                    <div className="min-w-0 text-right">
+                      <p className="text-xs text-slate-500">Cash Out</p>
+                      <p className="break-words font-semibold text-red-600 text-rupiah">{formatRupiah(position.cashOut)}</p>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
       {/* Table */}
       <div className="card overflow-hidden">
         {loading ? <PageLoading /> : transactions.length === 0 ? (
           <EmptyState title="Tidak ada transaksi" description="Belum ada transaksi cashflow." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <>
+          <div className="hidden md:block">
+            <table className="w-full table-fixed">
               <thead>
                 <tr>
-                  <th className="table-header">Tanggal</th>
-                  <th className="table-header">Cabang</th>
-                  <th className="table-header">Tipe</th>
+                  <th className="table-header w-[11%]">Tanggal</th>
+                  <th className="table-header w-[14%]">Cabang</th>
+                  <th className="table-header w-[10%]">Tipe</th>
                   <th className="table-header">Kategori</th>
-                  <th className="table-header">Deskripsi</th>
-                  <th className="table-header text-right">Cash In</th>
-                  <th className="table-header text-right">Cash Out</th>
-                  <th className="table-header">Sumber</th>
-                  <th className="table-header">Status</th>
-                  <th className="table-header text-right">Aksi</th>
+                  <th className="table-header text-right">Nominal</th>
+                  <th className="table-header w-[10%]">Sumber</th>
+                  <th className="table-header w-[10%]">Status</th>
+                  <th className="table-header w-[15%] text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {transactions.map((tx) => (
                   <tr key={tx.id} className={`hover:bg-gray-50 transition-colors ${tx.status === 'void' ? 'opacity-50' : ''}`}>
                     <td className="table-cell font-medium">{formatDate(tx.transaction_date, 'dd/MM/yy')}</td>
-                    <td className="table-cell">{tx.branch?.name || '—'}</td>
+                    <td className="table-cell"><div className="truncate">{tx.branch?.name || '-'}</div></td>
                     <td className="table-cell"><CashflowTypeBadge type={tx.transaction_type} /></td>
-                    <td className="table-cell">{tx.category?.name || '—'}</td>
-                    <td className="table-cell text-gray-500 max-w-xs truncate">{tx.description || '—'}</td>
-                    <td className="table-cell text-right text-emerald-600 font-medium text-rupiah">
-                      {tx.cash_in > 0 ? formatRupiah(tx.cash_in) : '—'}
+                    <td className="table-cell">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{tx.category?.name || '-'}</p>
+                        {tx.description && <p className="truncate text-xs text-gray-500">{tx.description}</p>}
+                      </div>
                     </td>
-                    <td className="table-cell text-right text-red-600 font-medium text-rupiah">
-                      {tx.cash_out > 0 ? formatRupiah(tx.cash_out) : '—'}
+                    <td className={`table-cell text-right font-bold text-rupiah ${tx.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <div className="truncate">{getNominalLabel(tx)}</div>
                     </td>
                     <td className="table-cell">
                       {tx.source === 'sales' ? (
@@ -311,29 +558,30 @@ export default function CashflowPage() {
                     <td className="table-cell"><CashflowStatusBadge status={tx.status} /></td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
-                        {tx.source === 'manual' && (
+                        {tx.source === 'manual' && tx.status === 'active' && (
                           <>
-                            {tx.status === 'active' && (
-                              <>
-                                <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600" title="Void">
-                                  <XCircle className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                            <button
-                              onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
-                              className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
-                              title="Hapus"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
+                            <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600" title="Void">
+                              <XCircle className="w-3.5 h-3.5" />
                             </button>
                           </>
                         )}
+                        {canDeleteCashflow(tx) && (
+                          <button
+                            onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                            title="Hapus Transaksi Void"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {tx.source === 'manual' && tx.status === 'void' && !canDeleteCashflow(tx) && (
+                          <span className="text-xs text-gray-400 px-2">Void</span>
+                        )}
                         {tx.source === 'sales' && (
-                          <span className="text-xs text-gray-400 px-2">Dari Sales</span>
+                          <span className="text-xs text-gray-400 px-2">{tx.status === 'void' ? 'Hapus lewat Sales' : 'Dari Sales'}</span>
                         )}
                       </div>
                     </td>
@@ -342,13 +590,80 @@ export default function CashflowPage() {
               </tbody>
             </table>
           </div>
+          <div className="space-y-3 p-3 md:hidden">
+            {transactions.map((tx) => (
+              <article key={tx.id} className={`rounded-xl border border-slate-100 bg-white p-3 shadow-sm ${tx.status === 'void' ? 'opacity-60' : ''}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">{formatDate(tx.transaction_date, 'dd MMM yyyy')}</p>
+                    <p className="truncate text-xs text-slate-500">{tx.branch?.name || '-'}</p>
+                  </div>
+                  <CashflowStatusBadge status={tx.status} />
+                </div>
+
+                <div className="mt-3 rounded-lg bg-slate-50 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <CashflowTypeBadge type={tx.transaction_type} />
+                      <p className="mt-2 truncate text-sm font-semibold text-slate-900">{tx.category?.name || '-'}</p>
+                      {tx.description && <p className="mt-0.5 truncate text-xs text-slate-500">{tx.description}</p>}
+                    </div>
+                    <p className={`max-w-[48%] break-words text-right text-base font-bold text-rupiah ${tx.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {getNominalLabel(tx)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  {tx.source === 'sales' ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-600">
+                      <Info className="w-3 h-3" /> {tx.status === 'void' ? 'Hapus lewat Sales' : 'Auto Sales'}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500">Manual</span>
+                  )}
+
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {tx.source === 'manual' && tx.status === 'active' && (
+                      <>
+                        <button
+                          onClick={() => openEdit(tx)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-blue-600"
+                          title="Edit"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setVoidTarget(tx)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                          title="Void"
+                        >
+                          <XCircle className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                    {canDeleteCashflow(tx) && (
+                      <button
+                        onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                        title="Hapus Transaksi Void"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+          </>
         )}
       </div>
 
       {/* Add/Edit Modal */}
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editTx ? 'Edit Transaksi' : 'Tambah Transaksi Cashflow'} size="md">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Tanggal <span className="text-red-500">*</span></label>
               <input type="date" {...register('transaction_date')} className="input-field" />
@@ -412,8 +727,8 @@ export default function CashflowPage() {
         onClose={() => { setDeleteTarget(null); setDeleteReason('') }}
         onConfirm={handleDelete}
         loading={saving}
-        title="Hapus Transaksi"
-        description={`Yakin ingin menghapus transaksi "${deleteTarget?.description || deleteTarget?.category?.name}"? Data akan dihapus permanen dari sistem.`}
+        title="Hapus Permanen Transaksi Void"
+        description={`Yakin ingin menghapus permanen transaksi manual void "${deleteTarget?.description || deleteTarget?.category?.name}"? Data akan hilang dari cashflow operasional.`}
         confirmLabel="Hapus Permanen"
         confirmClass="bg-red-600 hover:bg-red-700 text-white"
         showReason

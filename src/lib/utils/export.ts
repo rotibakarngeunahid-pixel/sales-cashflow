@@ -1,7 +1,20 @@
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 import type { SalesReport, CashflowTransaction } from '@/types/database'
-import { formatDate, formatRupiah } from './format'
+import { formatDate } from './format'
+
+type CashPositionExport = {
+  branchName: string
+  cashIn: number
+  cashOut: number
+  balance: number
+}
+
+type CashflowExportOptions = {
+  filename?: string
+  cashPositions?: CashPositionExport[]
+  positionAsOfDate?: string
+}
 
 export function exportSalesToExcel(data: SalesReport[], filename = 'laporan-penjualan') {
   const rows = data.map((row) => ({
@@ -51,7 +64,14 @@ export function exportSalesToCSV(data: SalesReport[], filename = 'laporan-penjua
   saveAs(blob, `${filename}.csv`)
 }
 
-export function exportCashflowToExcel(data: CashflowTransaction[], filename = 'laporan-cashflow') {
+export function exportCashflowToExcel(
+  data: CashflowTransaction[],
+  options: CashflowExportOptions | string = {}
+) {
+  const filename = typeof options === 'string' ? options : options.filename ?? 'laporan-cashflow'
+  const cashPositions = typeof options === 'string' ? [] : options.cashPositions ?? []
+  const positionAsOfDate = typeof options === 'string' ? '' : options.positionAsOfDate ?? ''
+
   const rows = data.map((row) => ({
     Tanggal: formatDate(row.transaction_date, 'dd/MM/yyyy'),
     Cabang: row.branch?.name ?? '',
@@ -68,6 +88,19 @@ export function exportCashflowToExcel(data: CashflowTransaction[], filename = 'l
   const ws = XLSX.utils.json_to_sheet(rows)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Cashflow')
+
+  if (cashPositions.length > 0) {
+    const positionRows = cashPositions.map((row) => ({
+      'Tanggal Acuan': positionAsOfDate ? formatDate(positionAsOfDate, 'dd/MM/yyyy') : '',
+      Cabang: row.branchName,
+      'Total Cash In': row.cashIn,
+      'Total Cash Out': row.cashOut,
+      'Posisi Kas': row.balance,
+    }))
+    const positionWs = XLSX.utils.json_to_sheet(positionRows)
+    XLSX.utils.book_append_sheet(wb, positionWs, 'Posisi Kas')
+  }
+
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
   saveAs(new Blob([buf], { type: 'application/octet-stream' }), `${filename}.xlsx`)
 }
