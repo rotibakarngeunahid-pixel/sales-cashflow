@@ -9,7 +9,6 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import type { SalesReport, SalesStatus, Branch, Profile } from '@/types/database'
 import { formatDate, formatRupiah } from '@/lib/utils/format'
-import { exportSalesToExcel } from '@/lib/utils/export'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
 import { SalesBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
@@ -86,6 +85,11 @@ export default function SalesReportsPage() {
   const [deleteReason, setDeleteReason] = useState('')
   const [deleting, setDeleting] = useState(false)
   const isOwner = profile?.role === 'owner'
+
+  async function handleExport() {
+    const { exportSalesToExcel } = await import('@/lib/utils/export')
+    exportSalesToExcel(reports)
+  }
 
   const canDeleteSales = useCallback((report: SalesReport) => (
     isOwner && ['draft', 'submitted', 'void'].includes(report.status)
@@ -293,7 +297,7 @@ export default function SalesReportsPage() {
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <button
-            onClick={() => exportSalesToExcel(reports)}
+            onClick={handleExport}
             className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
           >
             <FileSpreadsheet className="w-4 h-4" />

@@ -26,8 +26,7 @@ function LoginForm() {
     const supabase = createClient()
 
     // Look up email by username via RPC (callable without auth)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: email, error: rpcError } = await (supabase as any).rpc('get_email_by_username', {
+    const { data: email, error: rpcError } = await supabase.rpc('get_email_by_username', {
       p_username: LOGIN_USERNAME,
     })
 

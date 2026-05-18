@@ -33,6 +33,7 @@ export default function SettingsPage() {
 
   const profileForm = useForm<ProfileForm>({ resolver: zodResolver(profileSchema) })
   const passwordForm = useForm<PasswordForm>({ resolver: zodResolver(passwordSchema) })
+  const { reset: resetProfileForm } = profileForm
 
   useEffect(() => {
     async function load() {
@@ -48,11 +49,11 @@ export default function SettingsPage() {
           { ttlMs: 5 * 60_000 }
         )
         setProfile(data)
-        profileForm.reset({ full_name: data?.full_name || '' })
+        resetProfileForm({ full_name: data?.full_name || '' })
       }
     }
     load()
-  }, [])
+  }, [resetProfileForm])
 
   async function handleProfileSave(data: ProfileForm) {
     if (!profile) return

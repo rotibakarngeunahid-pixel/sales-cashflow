@@ -5,7 +5,6 @@ import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckC
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
-import { exportCashflowToExcel } from '@/lib/utils/export'
 import { cashflowSchema, type CashflowFormData } from '@/lib/validations/cashflow'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -79,6 +78,11 @@ export default function CashflowPage() {
     setToast({ message: msg, type })
     setTimeout(() => setToast(null), 4000)
   }, [])
+
+  async function handleExport() {
+    const { exportCashflowToExcel } = await import('@/lib/utils/export')
+    exportCashflowToExcel(transactions, { cashPositions, positionAsOfDate: endDate })
+  }
 
   const today = new Date()
   const [startDate, setStartDate] = useState(format(startOfMonth(today), 'yyyy-MM-dd'))
@@ -468,7 +472,7 @@ export default function CashflowPage() {
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <button
-            onClick={() => exportCashflowToExcel(transactions, { cashPositions, positionAsOfDate: endDate })}
+            onClick={handleExport}
             className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
           >
             <FileSpreadsheet className="w-4 h-4" />

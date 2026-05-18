@@ -1,8 +1,7 @@
 'use client'
 
 import Image from 'next/image'
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
   PlusSquare,
@@ -18,7 +17,7 @@ import {
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 
 const LOGO_URL = '/rbngeunahicon.webp'
 
@@ -66,17 +65,12 @@ interface SidebarProps {
 
 export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
-  const router = useRouter()
   const isOwner = profile?.role === 'owner'
 
   const visibleNavItems = useMemo(
     () => allNavItems.filter((item) => !item.ownerOnly || isOwner),
     [isOwner]
   )
-
-  useEffect(() => {
-    visibleNavItems.forEach((item) => router.prefetch(item.href))
-  }, [router, visibleNavItems])
 
   const activeHref = useMemo(() => {
     return [...visibleNavItems]
@@ -87,10 +81,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
 
   const initials = (profile?.full_name || profile?.email || 'U')[0].toUpperCase()
 
-  function handleNavigation(
-    event: React.MouseEvent<HTMLAnchorElement>,
-    href: string
-  ) {
+  function handleNavigation(event: React.MouseEvent<HTMLAnchorElement>, href: string) {
     if (
       event.defaultPrevented ||
       event.button !== 0 ||
@@ -102,9 +93,9 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
       return
     }
 
-    event.preventDefault()
-    if (pathname !== href) router.push(href)
     onClose()
+
+    if (pathname === href) event.preventDefault()
   }
 
   return (
@@ -127,9 +118,8 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-slate-100">
-          <Link
+          <a
             href="/dashboard"
-            prefetch
             className="flex items-center gap-3 min-w-0 group"
             onClick={(event) => handleNavigation(event, '/dashboard')}
           >
@@ -147,7 +137,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
               <p className="text-sm font-black text-slate-900 tracking-tight">Roti Bakar</p>
               <p className="text-xs font-extrabold text-rbn-red tracking-widest uppercase">Ngeunah</p>
             </div>
-          </Link>
+          </a>
           <button
             onClick={onClose}
             className="lg:hidden p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
@@ -174,13 +164,10 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
 
                     return (
                       <li key={item.href}>
-                        <Link
+                        <a
                           href={item.href}
-                          prefetch
                           aria-current={isActive ? 'page' : undefined}
                           onClick={(event) => handleNavigation(event, item.href)}
-                          onMouseEnter={() => router.prefetch(item.href)}
-                          onFocus={() => router.prefetch(item.href)}
                           className={cn(
                             'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all group',
                             isActive
@@ -198,7 +185,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
                           {isActive && (
                             <ChevronRight className="w-3.5 h-3.5 text-white/70 flex-shrink-0" />
                           )}
-                        </Link>
+                        </a>
                       </li>
                     )
                   })}
