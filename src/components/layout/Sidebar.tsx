@@ -87,6 +87,26 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
 
   const initials = (profile?.full_name || profile?.email || 'U')[0].toUpperCase()
 
+  function handleNavigation(
+    event: React.MouseEvent<HTMLAnchorElement>,
+    href: string
+  ) {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return
+    }
+
+    event.preventDefault()
+    if (pathname !== href) router.push(href)
+    onClose()
+  }
+
   return (
     <>
       {isOpen && (
@@ -107,7 +127,12 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className="flex items-center justify-between px-4 py-4 border-b border-slate-100">
-          <Link href="/dashboard" prefetch className="flex items-center gap-3 min-w-0 group" onClick={onClose}>
+          <Link
+            href="/dashboard"
+            prefetch
+            className="flex items-center gap-3 min-w-0 group"
+            onClick={(event) => handleNavigation(event, '/dashboard')}
+          >
             <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 ring-2 ring-orange-100 group-hover:ring-orange-300 transition-all shadow-sm">
               <Image
                 src={LOGO_URL}
@@ -153,7 +178,7 @@ export default function Sidebar({ profile, isOpen, onClose }: SidebarProps) {
                           href={item.href}
                           prefetch
                           aria-current={isActive ? 'page' : undefined}
-                          onClick={onClose}
+                          onClick={(event) => handleNavigation(event, item.href)}
                           onMouseEnter={() => router.prefetch(item.href)}
                           onFocus={() => router.prefetch(item.href)}
                           className={cn(
