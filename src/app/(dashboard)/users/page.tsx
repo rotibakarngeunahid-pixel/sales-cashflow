@@ -12,6 +12,7 @@ import Modal, { ConfirmModal } from '@/components/ui/Modal'
 import { ActiveBadge, RoleBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { getCachedData, getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 const addUserSchema = z.object({
   email: z.string().email('Email tidak valid'),
@@ -34,6 +35,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null)
+  const [profileLoading, setProfileLoading] = useState(true)
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Profile | null>(null)
   const [toggleTarget, setToggleTarget] = useState<Profile | null>(null)
@@ -43,13 +45,32 @@ export default function UsersPage() {
   const addForm = useForm<AddUserForm>({ resolver: zodResolver(addUserSchema) })
   const editForm = useForm<EditUserForm>({ resolver: zodResolver(editUserSchema) })
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at')
-    setUsers(data || [])
+    const cacheKey = 'users:profiles'
+    const cached = getCachedData<Profile[]>(cacheKey)
+
+    if (cached && !options.force) {
+      setUsers(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+
+    const data = await getOrFetchCached<Profile[]>(
+      cacheKey,
+      async () => {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .order('created_at')
+
+        return data || []
+      },
+      { ttlMs: 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setUsers(data)
     setLoading(false)
   }, [])
 
@@ -58,11 +79,19 @@ export default function UsersPage() {
   useEffect(() => {
     async function loadProfile() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        const data = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setCurrentProfile(data)
       }
+      setProfileLoading(false)
     }
     loadProfile()
   }, [])
@@ -112,7 +141,8 @@ export default function UsersPage() {
     setSaving(false)
     setAddModalOpen(false)
     addForm.reset()
-    setTimeout(load, 1500)
+    invalidateCachedData('users:')
+    setTimeout(() => load({ force: true }), 1500)
   }
 
   async function handleEditUser(data: EditUserForm) {
@@ -130,7 +160,8 @@ export default function UsersPage() {
     }).eq('id', editTarget.id)
     setSaving(false)
     setEditTarget(null)
-    load()
+    invalidateCachedData(/^(users:|profile:)/)
+    load({ force: true })
   }
 
   async function handleToggle() {
@@ -149,10 +180,11 @@ export default function UsersPage() {
     await supabase.from('profiles').update({ is_active: !toggleTarget.is_active }).eq('id', toggleTarget.id)
     setSaving(false)
     setToggleTarget(null)
-    load()
+    invalidateCachedData(/^(users:|profile:)/)
+    load({ force: true })
   }
 
-  if (loading) return <PageLoading />
+  if (loading || profileLoading) return <PageLoading />
 
   // Only owner can access this page
   if (currentProfile?.role !== 'owner') {

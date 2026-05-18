@@ -1,17 +1,40 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2 } from 'lucide-react'
 import SalesForm from '@/components/sales/SalesForm'
 
+const REPORTS_PATH = '/sales/reports'
+const SALES_REPORTS_TOAST_KEY = 'salesReportsToast'
+
 export default function SalesInputPage() {
   const router = useRouter()
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const fallbackTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (fallbackTimerRef.current) window.clearTimeout(fallbackTimerRef.current)
+    }
+  }, [])
 
   function handleSuccess(msg?: string) {
-    setSuccessMsg(msg || 'Berhasil disimpan!')
-    setTimeout(() => router.push('/sales/reports'), 1500)
+    const message = msg || 'Berhasil disimpan!'
+    setSuccessMsg(message)
+    if (fallbackTimerRef.current) window.clearTimeout(fallbackTimerRef.current)
+
+    try {
+      window.sessionStorage.setItem(SALES_REPORTS_TOAST_KEY, message)
+    } catch {
+      // Ignore storage failures; navigation must still continue.
+    }
+
+    router.replace(REPORTS_PATH)
+
+    fallbackTimerRef.current = window.setTimeout(() => {
+      window.location.assign(REPORTS_PATH)
+    }, 900)
   }
 
   return (
@@ -19,7 +42,7 @@ export default function SalesInputPage() {
       {/* Header */}
       <div className="flex items-center gap-3">
         <button
-          onClick={() => router.push('/sales/reports')}
+          onClick={() => router.push(REPORTS_PATH)}
           className="p-2 rounded-lg hover:bg-white text-slate-500 border border-transparent hover:border-slate-200 transition-colors"
           aria-label="Kembali ke laporan"
         >
@@ -61,7 +84,7 @@ export default function SalesInputPage() {
       <div className="card p-4 sm:p-5">
         <SalesForm
           onSuccess={handleSuccess}
-          onCancel={() => router.push('/sales/reports')}
+          onCancel={() => router.push(REPORTS_PATH)}
         />
       </div>
     </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import {
   Plus, Eye, Pencil, CheckCircle, XCircle,
   FileSpreadsheet, RefreshCw, Trash2, CheckCircle2, X
@@ -17,8 +17,10 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
 import SalesForm from '@/components/sales/SalesForm'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
+import { getCachedData, getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 type ActionType = 'post' | 'void'
+const SALES_REPORTS_TOAST_KEY = 'salesReportsToast'
 
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
   return (
@@ -42,7 +44,6 @@ function Toast({ message, type, onClose }: { message: string; type: 'success' | 
 }
 
 export default function SalesReportsPage() {
-  const router = useRouter()
   const [reports, setReports] = useState<SalesReport[]>([])
   const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [loading, setLoading] = useState(true)
@@ -54,6 +55,19 @@ export default function SalesReportsPage() {
     setToast({ message: msg, type })
     setTimeout(() => setToast(null), 4000)
   }, [])
+
+  useEffect(() => {
+    let message: string | null = null
+
+    try {
+      message = window.sessionStorage.getItem(SALES_REPORTS_TOAST_KEY)
+      if (message) window.sessionStorage.removeItem(SALES_REPORTS_TOAST_KEY)
+    } catch {
+      message = null
+    }
+
+    if (message) toastTimerRef(message, 'success')
+  }, [toastTimerRef])
 
   // Filters
   const today = new Date()
@@ -77,22 +91,39 @@ export default function SalesReportsPage() {
     isOwner && ['draft', 'submitted', 'void'].includes(report.status)
   ), [isOwner])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    let query = supabase
-      .from('sales_reports')
-      .select('*, branch:branches(id,name)')
-      .gte('report_date', startDate)
-      .lte('report_date', endDate)
-      .order('report_date', { ascending: false })
-      .order('created_at', { ascending: false })
+    const cacheKey = `sales-reports:${startDate}:${endDate}:${filterBranch || 'all'}:${filterStatus || 'all'}`
+    const cached = getCachedData<SalesReport[]>(cacheKey)
 
-    if (filterBranch) query = query.eq('branch_id', filterBranch)
-    if (filterStatus) query = query.eq('status', filterStatus as SalesStatus)
+    if (cached && !options.force) {
+      setReports(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
 
-    const { data } = await query
-    setReports(data || [])
+    const data = await getOrFetchCached<SalesReport[]>(
+      cacheKey,
+      async () => {
+        let query = supabase
+          .from('sales_reports')
+          .select('*, branch:branches(id,name)')
+          .gte('report_date', startDate)
+          .lte('report_date', endDate)
+          .order('report_date', { ascending: false })
+          .order('created_at', { ascending: false })
+
+        if (filterBranch) query = query.eq('branch_id', filterBranch)
+        if (filterStatus) query = query.eq('status', filterStatus as SalesStatus)
+
+        const { data } = await query
+        return data || []
+      },
+      { ttlMs: 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setReports(data)
     setLoading(false)
   }, [startDate, endDate, filterBranch, filterStatus])
 
@@ -101,13 +132,27 @@ export default function SalesReportsPage() {
   useEffect(() => {
     async function init() {
       const supabase = createClient()
-      const [{ data: br }, { data: { user } }] = await Promise.all([
-        supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name'),
-        supabase.auth.getUser(),
+      const [{ data: { session } }, br] = await Promise.all([
+        supabase.auth.getSession(),
+        getOrFetchCached<Pick<Branch, 'id' | 'name'>[]>(
+          'branches:active',
+          async () => {
+            const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name')
+            return data || []
+          },
+          { ttlMs: 5 * 60_000 }
+        ),
       ])
-      setBranches(br || [])
-      if (user) {
-        const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      setBranches(br)
+      if (session?.user) {
+        const prof = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setProfile(prof)
       }
     }
@@ -118,7 +163,8 @@ export default function SalesReportsPage() {
     if (!actionTarget) return
     setActioning(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     const newStatus: SalesStatus = actionTarget.type === 'post' ? 'posted' : 'void'
     const oldReport = actionTarget.report
 
@@ -146,12 +192,13 @@ export default function SalesReportsPage() {
 
     setActioning(false)
     setActionTarget(null)
+    invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
 
     const successMsg = actionTarget.type === 'post'
       ? 'Laporan berhasil diposting! Data masuk ke cashflow.'
       : 'Laporan berhasil divoid.'
     toastTimerRef(successMsg, 'success')
-    load()
+    load({ force: true })
   }
 
   async function handleDelete() {
@@ -165,7 +212,8 @@ export default function SalesReportsPage() {
 
     setDeleting(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     const now = new Date().toISOString()
     const isVoidDelete = deleteTarget.status === 'void'
 
@@ -210,8 +258,9 @@ export default function SalesReportsPage() {
     setDeleting(false)
     setDeleteTarget(null)
     setDeleteReason('')
+    invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:|cashflow:|cash-positions:)/)
     toastTimerRef(isVoidDelete ? 'Laporan void berhasil dihapus permanen.' : 'Laporan penjualan berhasil dihapus permanen.', 'success')
-    load()
+    load({ force: true })
   }
 
   const totals = reports
@@ -250,13 +299,14 @@ export default function SalesReportsPage() {
             <FileSpreadsheet className="w-4 h-4" />
             <span className="hidden sm:inline">Export Excel</span>
           </button>
-          <button
-            onClick={() => router.push('/sales/input')}
+          <Link
+            href="/sales/input"
+            prefetch
             className="btn-primary flex w-full items-center gap-2 sm:w-auto"
           >
             <Plus className="w-4 h-4" />
             <span>Input Penjualan</span>
-          </button>
+          </Link>
         </div>
       </div>
 
@@ -286,7 +336,7 @@ export default function SalesReportsPage() {
               { value: 'void', label: 'Void' },
             ]}
           />
-          <button onClick={load} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
+          <button onClick={() => load({ force: true })} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Refresh</span>
           </button>
@@ -318,9 +368,9 @@ export default function SalesReportsPage() {
             title="Tidak ada laporan"
             description="Belum ada laporan penjualan untuk filter yang dipilih."
             action={
-              <button onClick={() => router.push('/sales/input')} className="btn-primary text-sm flex items-center gap-2">
+              <Link href="/sales/input" prefetch className="btn-primary text-sm flex items-center gap-2">
                 <Plus className="w-4 h-4" /> Input Penjualan
-              </button>
+              </Link>
             }
           />
         ) : (
@@ -500,7 +550,8 @@ export default function SalesReportsPage() {
           onSuccess={(msg) => {
             setEditModalOpen(false)
             toastTimerRef(msg || 'Perubahan berhasil disimpan.', 'success')
-            load()
+            invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
+            load({ force: true })
           }}
           onCancel={() => setEditModalOpen(false)}
         />

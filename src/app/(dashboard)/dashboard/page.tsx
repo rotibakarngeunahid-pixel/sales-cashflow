@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { format, startOfMonth, endOfMonth, differenceInDays } from 'date-fns'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { getCachedData, getOrFetchCached } from '@/lib/utils/client-cache'
 
 const CHART_COLORS = ['#DC2626', '#EA580C', '#D97706', '#16A34A', '#2563EB', '#7C3AED', '#DB2777']
 
@@ -35,8 +35,12 @@ interface TodayReport {
   grand_total_nett_sales: number
 }
 
+interface DashboardData {
+  sales: SalesReport[]
+  cashflow: CashflowTransaction[]
+}
+
 export default function DashboardPage() {
-  const router = useRouter()
   const today = new Date()
   const todayStr = toDateInputValue()
   const todayLabel = format(today, 'EEEE, d MMMM yyyy').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -57,13 +61,20 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadToday() {
       const supabase = createClient()
-      const { data } = await supabase
-        .from('sales_reports')
-        .select('status, grand_total_nett_sales')
-        .eq('report_date', todayStr)
-        .neq('status', 'void')
+      const cacheKey = `dashboard-today:${todayStr}`
+      const reports = await getOrFetchCached<TodayReport[]>(
+        cacheKey,
+        async () => {
+          const { data } = await supabase
+            .from('sales_reports')
+            .select('status, grand_total_nett_sales')
+            .eq('report_date', todayStr)
+            .neq('status', 'void')
 
-      const reports = (data || []) as TodayReport[]
+          return (data || []) as TodayReport[]
+        },
+        { ttlMs: 30_000, force: Boolean(getCachedData<TodayReport[]>(cacheKey)) }
+      )
       setTodayReports(reports)
 
       if (reports.length === 0) {
@@ -77,33 +88,53 @@ export default function DashboardPage() {
     loadToday()
   }, [todayStr])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
+    const cacheKey = `dashboard:${startDate}:${endDate}:${filterBranch || 'all'}`
+    const cached = getCachedData<DashboardData>(cacheKey)
 
-    let salesQuery = supabase
-      .from('sales_reports')
-      .select('*, branch:branches(id,name)')
-      .neq('status', 'void')
-      .gte('report_date', startDate)
-      .lte('report_date', endDate)
-      .order('report_date')
+    if (cached && !options.force) {
+      setSales(cached.sales)
+      setCashflow(cached.cashflow)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
 
-    if (filterBranch) salesQuery = salesQuery.eq('branch_id', filterBranch)
+    const data = await getOrFetchCached<DashboardData>(
+      cacheKey,
+      async () => {
+        let salesQuery = supabase
+          .from('sales_reports')
+          .select('*, branch:branches(id,name)')
+          .neq('status', 'void')
+          .gte('report_date', startDate)
+          .lte('report_date', endDate)
+          .order('report_date')
 
-    let cfQuery = supabase
-      .from('cashflow_transactions')
-      .select('*, branch:branches(id,name), category:cashflow_categories(id,name)')
-      .eq('status', 'active')
-      .gte('transaction_date', startDate)
-      .lte('transaction_date', endDate)
+        if (filterBranch) salesQuery = salesQuery.eq('branch_id', filterBranch)
 
-    if (filterBranch) cfQuery = cfQuery.eq('branch_id', filterBranch)
+        let cfQuery = supabase
+          .from('cashflow_transactions')
+          .select('*, branch:branches(id,name), category:cashflow_categories(id,name)')
+          .eq('status', 'active')
+          .gte('transaction_date', startDate)
+          .lte('transaction_date', endDate)
 
-    const [{ data: salesData }, { data: cfData }] = await Promise.all([salesQuery, cfQuery])
+        if (filterBranch) cfQuery = cfQuery.eq('branch_id', filterBranch)
 
-    setSales(salesData || [])
-    setCashflow(cfData || [])
+        const [{ data: salesData }, { data: cfData }] = await Promise.all([salesQuery, cfQuery])
+
+        return {
+          sales: salesData || [],
+          cashflow: cfData || [],
+        }
+      },
+      { ttlMs: 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setSales(data.sales)
+    setCashflow(data.cashflow)
     setLoading(false)
   }, [startDate, endDate, filterBranch])
 
@@ -112,7 +143,14 @@ export default function DashboardPage() {
   useEffect(() => {
     async function loadBranches() {
       const supabase = createClient()
-      const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name')
+      const data = await getOrFetchCached<Pick<Branch, 'id' | 'name'>[]>(
+        'branches:active',
+        async () => {
+          const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name')
+          return data || []
+        },
+        { ttlMs: 5 * 60_000 }
+      )
       setBranches(data || [])
     }
     loadBranches()
@@ -193,13 +231,14 @@ export default function DashboardPage() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => router.push('/sales/input')}
+            <Link
+              href="/sales/input"
+              prefetch
               className="flex items-center gap-2 px-5 py-2.5 bg-white text-rbn-red font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all hover:-translate-y-0.5 flex-shrink-0"
             >
               <PlusCircle className="w-4 h-4" />
               Input Laporan Sekarang
-            </button>
+            </Link>
           </div>
         </div>
       )}

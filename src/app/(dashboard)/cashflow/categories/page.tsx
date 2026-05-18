@@ -12,6 +12,7 @@ import { ActiveBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SelectFilter } from '@/components/ui/FilterBar'
+import { getCachedData, getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 const defaultTypeLabels: Record<string, string> = {
   cash_in: 'Cash In',
@@ -42,13 +43,31 @@ export default function CashflowCategoriesPage() {
     resolver: zodResolver(categorySchema),
   })
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    let query = supabase.from('cashflow_categories').select('*').is('deleted_at', null).order('default_type').order('name')
-    if (filterType) query = query.eq('default_type', filterType as CategoryDefaultType)
-    if (filterActive !== '') query = query.eq('is_active', filterActive === 'true')
-    const { data } = await query
-    setCategories(data || [])
+    const cacheKey = `cashflow-categories:${filterType || 'all'}:${filterActive || 'all'}`
+    const cached = getCachedData<CashflowCategory[]>(cacheKey)
+
+    if (cached && !options.force) {
+      setCategories(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+
+    const data = await getOrFetchCached<CashflowCategory[]>(
+      cacheKey,
+      async () => {
+        let query = supabase.from('cashflow_categories').select('*').is('deleted_at', null).order('default_type').order('name')
+        if (filterType) query = query.eq('default_type', filterType as CategoryDefaultType)
+        if (filterActive !== '') query = query.eq('is_active', filterActive === 'true')
+        const { data } = await query
+        return data || []
+      },
+      { ttlMs: 5 * 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setCategories(data)
     setLoading(false)
   }, [filterType, filterActive])
 
@@ -57,9 +76,16 @@ export default function CashflowCategoriesPage() {
   useEffect(() => {
     async function loadProfile() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        const data = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setCurrentProfile(data)
       }
     }
@@ -110,7 +136,8 @@ export default function CashflowCategoriesPage() {
 
     setSaving(false)
     setModalOpen(false)
-    load()
+    invalidateCachedData(/^cashflow-categories:/)
+    load({ force: true })
   }
 
   async function handleToggle() {
@@ -130,7 +157,8 @@ export default function CashflowCategoriesPage() {
     })
     setSaving(false)
     setToggleTarget(null)
-    load()
+    invalidateCachedData(/^cashflow-categories:/)
+    load({ force: true })
   }
 
   async function handleDelete() {
@@ -157,7 +185,8 @@ export default function CashflowCategoriesPage() {
     setSaving(false)
     setDeleteTarget(null)
     setDeleteReason('')
-    load()
+    invalidateCachedData(/^(cashflow-categories:|cashflow:)/)
+    load({ force: true })
   }
 
   if (loading) return <PageLoading />

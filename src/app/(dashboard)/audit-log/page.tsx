@@ -10,6 +10,7 @@ import { SelectFilter, DateRangeFilter } from '@/components/ui/FilterBar'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import { Eye } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
+import { getCachedData, getOrFetchCached } from '@/lib/utils/client-cache'
 
 const actionLabels: Record<string, string> = {
   sales_created: 'Sales Dibuat',
@@ -56,20 +57,37 @@ export default function AuditLogPage() {
   const [endDate, setEndDate] = useState(format(endOfMonth(today), 'yyyy-MM-dd'))
 
   const load = useCallback(async () => {
-    setLoading(true)
     const supabase = createClient()
-    let query = supabase
-      .from('audit_logs')
-      .select('*, changer:profiles(full_name, email)')
-      .gte('changed_at', `${startDate}T00:00:00`)
-      .lte('changed_at', `${endDate}T23:59:59`)
-      .order('changed_at', { ascending: false })
-      .limit(500)
+    const cacheKey = `audit-log:${startDate}:${endDate}:${filterAction || 'all'}`
+    const cached = getCachedData<AuditLog[]>(cacheKey)
 
-    if (filterAction) query = query.eq('action', filterAction)
+    if (cached) {
+      setLogs(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
 
-    const { data } = await query
-    setLogs(data || [])
+    const data = await getOrFetchCached<AuditLog[]>(
+      cacheKey,
+      async () => {
+        let query = supabase
+          .from('audit_logs')
+          .select('*, changer:profiles(full_name, email)')
+          .gte('changed_at', `${startDate}T00:00:00`)
+          .lte('changed_at', `${endDate}T23:59:59`)
+          .order('changed_at', { ascending: false })
+          .limit(500)
+
+        if (filterAction) query = query.eq('action', filterAction)
+
+        const { data } = await query
+        return data || []
+      },
+      { ttlMs: 60_000, force: Boolean(cached) }
+    )
+
+    setLogs(data)
     setLoading(false)
   }, [startDate, endDate, filterAction])
 

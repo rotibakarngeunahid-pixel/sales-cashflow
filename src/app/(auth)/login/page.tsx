@@ -37,7 +37,7 @@ function LoginForm() {
       return
     }
 
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
@@ -49,7 +49,7 @@ function LoginForm() {
     }
 
     // Verify account is still active
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = authData.user
     if (user) {
       const { data: profileData } = await supabase
         .from('profiles')
@@ -83,7 +83,7 @@ function LoginForm() {
             {/* Logo */}
             <div className="relative z-10 h-36 w-36 overflow-hidden rounded-lg bg-white/10 ring-1 ring-white/20 shadow-xl">
               <Image
-                src="https://owner-portal.rotibakarngeunah.my.id/wp-content/uploads/2026/05/cropped-Icon-Roti-Bakar-Ngeunah.webp"
+                src="/rbngeunahicon.webp"
                 alt="Roti Bakar Ngeunah"
                 width={160}
                 height={160}

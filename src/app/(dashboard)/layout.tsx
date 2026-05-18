@@ -7,6 +7,7 @@ import Header from '@/components/layout/Header'
 import { createClient } from '@/lib/supabase/client'
 import type { Profile } from '@/types/database'
 import { toDateInputValue } from '@/lib/utils/format'
+import { getOrFetchCached } from '@/lib/utils/client-cache'
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -22,6 +23,18 @@ const pageTitles: Record<string, string> = {
 
 type ReportStatus = 'none' | 'draft' | 'done' | null
 
+const prefetchPaths = [
+  '/dashboard',
+  '/sales/input',
+  '/sales/reports',
+  '/cashflow',
+  '/cashflow/categories',
+  '/branches',
+  '/users',
+  '/audit-log',
+  '/settings',
+]
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
@@ -32,16 +45,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => {
     async function loadProfile() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) {
         router.push('/login')
         return
       }
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
+      const data = await getOrFetchCached<Profile | null>(
+        `profile:${session.user.id}`,
+        async () => {
+          const { data } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single()
+
+          return data
+        },
+        { ttlMs: 5 * 60_000 }
+      )
       if (!data || !data.is_active) {
         await supabase.auth.signOut()
         router.push('/login?error=inactive')
@@ -52,22 +73,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     loadProfile()
   }, [router])
 
+  useEffect(() => {
+    prefetchPaths.forEach((path) => router.prefetch(path))
+  }, [router])
+
   const refreshReportStatus = useCallback(async () => {
     const supabase = createClient()
     const today = toDateInputValue()
-    const { data } = await supabase
-      .from('sales_reports')
-      .select('status')
-      .eq('report_date', today)
-      .neq('status', 'void')
+    const status = await getOrFetchCached<ReportStatus>(
+      `sales-report-status:${today}`,
+      async () => {
+        const { data } = await supabase
+          .from('sales_reports')
+          .select('status')
+          .eq('report_date', today)
+          .neq('status', 'void')
 
-    if (!data || data.length === 0) {
-      setReportStatus('none')
-    } else if (data.every((r) => r.status === 'posted')) {
-      setReportStatus('done')
-    } else {
-      setReportStatus('draft')
-    }
+        if (!data || data.length === 0) return 'none'
+        if (data.every((r) => r.status === 'posted')) return 'done'
+        return 'draft'
+      },
+      { ttlMs: 30_000 }
+    )
+
+    setReportStatus(status)
   }, [])
 
   useEffect(() => {

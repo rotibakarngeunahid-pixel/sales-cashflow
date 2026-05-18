@@ -13,6 +13,7 @@ import { ActiveBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { SelectFilter } from '@/components/ui/FilterBar'
+import { getCachedData, getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 export default function BranchesPage() {
   const [branches, setBranches] = useState<Branch[]>([])
@@ -30,14 +31,32 @@ export default function BranchesPage() {
     resolver: zodResolver(branchSchema),
   })
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    let query = supabase.from('branches').select('*').is('deleted_at', null).order('name')
-    if (filterActive !== '') {
-      query = query.eq('is_active', filterActive === 'true')
+    const cacheKey = `branches:${filterActive || 'all'}`
+    const cached = getCachedData<Branch[]>(cacheKey)
+
+    if (cached && !options.force) {
+      setBranches(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
     }
-    const { data } = await query
-    setBranches(data || [])
+
+    const data = await getOrFetchCached<Branch[]>(
+      cacheKey,
+      async () => {
+        let query = supabase.from('branches').select('*').is('deleted_at', null).order('name')
+        if (filterActive !== '') {
+          query = query.eq('is_active', filterActive === 'true')
+        }
+        const { data } = await query
+        return data || []
+      },
+      { ttlMs: 5 * 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setBranches(data)
     setLoading(false)
   }, [filterActive])
 
@@ -48,9 +67,16 @@ export default function BranchesPage() {
   useEffect(() => {
     async function loadProfile() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        const data = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setCurrentProfile(data)
       }
     }
@@ -102,7 +128,8 @@ export default function BranchesPage() {
 
     setSaving(false)
     setModalOpen(false)
-    load()
+    invalidateCachedData(/^(branches:|branches:active|branches:active-full)/)
+    load({ force: true })
   }
 
   async function handleToggle() {
@@ -122,7 +149,8 @@ export default function BranchesPage() {
     })
     setSaving(false)
     setToggleTarget(null)
-    load()
+    invalidateCachedData(/^(branches:|branches:active|branches:active-full)/)
+    load({ force: true })
   }
 
   async function handleDelete() {
@@ -150,7 +178,8 @@ export default function BranchesPage() {
     setSaving(false)
     setDeleteTarget(null)
     setDeleteReason('')
-    load()
+    invalidateCachedData(/^(branches:|branches:active|branches:active-full|dashboard:|cashflow:|cash-positions:)/)
+    load({ force: true })
   }
 
   if (loading) return <PageLoading />

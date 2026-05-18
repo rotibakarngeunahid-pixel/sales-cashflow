@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Menu, LogOut, ChevronDown, PlusCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
@@ -52,22 +53,24 @@ export default function Header({ profile, title, onMenuClick, reportStatus }: He
         <div className="flex items-center gap-2 flex-shrink-0">
           {/* Today's report quick action */}
           {reportStatus === 'none' && (
-            <button
-              onClick={() => router.push('/sales/input')}
+            <Link
+              href="/sales/input"
+              prefetch
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-rbn-red to-rbn-orange text-white text-xs font-bold shadow-md shadow-red-200 hover:shadow-lg hover:shadow-red-300 transition-all hover:-translate-y-0.5"
             >
               <PlusCircle className="w-3.5 h-3.5" />
               Input Laporan Hari Ini
-            </button>
+            </Link>
           )}
           {reportStatus === 'draft' && (
-            <button
-              onClick={() => router.push('/sales/reports')}
+            <Link
+              href="/sales/reports"
+              prefetch
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 text-white text-xs font-bold shadow-md shadow-amber-200 hover:bg-amber-600 transition-all hover:-translate-y-0.5"
             >
               <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
               Laporan Draft
-            </button>
+            </Link>
           )}
           {reportStatus === 'done' && (
             <span className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">

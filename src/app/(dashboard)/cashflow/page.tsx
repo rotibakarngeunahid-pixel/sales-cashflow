@@ -15,6 +15,7 @@ import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
 import { format, startOfMonth } from 'date-fns'
+import { getCachedData, getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 type CashPosition = {
   branchId: string
@@ -70,6 +71,7 @@ export default function CashflowPage() {
   const [categories, setCategories] = useState<Pick<CashflowCategory, 'id' | 'name' | 'default_type'>[]>([])
   const [loading, setLoading] = useState(true)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [lookupsLoaded, setLookupsLoaded] = useState(false)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const isOwner = profile?.role === 'owner'
 
@@ -101,99 +103,152 @@ export default function CashflowPage() {
 
   const watchedType = watch('transaction_type')
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    let query = supabase
-      .from('cashflow_transactions')
-      .select('*, branch:branches(id,name), category:cashflow_categories(id,name)')
-      .gte('transaction_date', startDate)
-      .lte('transaction_date', endDate)
-      .order('transaction_date', { ascending: false })
-      .order('created_at', { ascending: false })
+    const cacheKey = `cashflow:${startDate}:${endDate}:${filterBranch || 'all'}:${filterType || 'all'}:${filterCat || 'all'}`
+    const cached = getCachedData<CashflowTransaction[]>(cacheKey)
 
-    if (filterBranch) query = query.eq('branch_id', filterBranch)
-    if (filterType) query = query.eq('transaction_type', filterType as CashflowType)
-    if (filterCat) query = query.eq('category_id', filterCat)
+    if (cached && !options.force) {
+      setTransactions(cached)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
 
-    const { data } = await query
-    setTransactions(data || [])
+    const data = await getOrFetchCached<CashflowTransaction[]>(
+      cacheKey,
+      async () => {
+        let query = supabase
+          .from('cashflow_transactions')
+          .select('*, branch:branches(id,name), category:cashflow_categories(id,name)')
+          .gte('transaction_date', startDate)
+          .lte('transaction_date', endDate)
+          .order('transaction_date', { ascending: false })
+          .order('created_at', { ascending: false })
+
+        if (filterBranch) query = query.eq('branch_id', filterBranch)
+        if (filterType) query = query.eq('transaction_type', filterType as CashflowType)
+        if (filterCat) query = query.eq('category_id', filterCat)
+
+        const { data } = await query
+        return data || []
+      },
+      { ttlMs: 60_000, force: options.force || Boolean(cached) }
+    )
+
+    setTransactions(data)
     setLoading(false)
   }, [startDate, endDate, filterBranch, filterType, filterCat])
 
   useEffect(() => { load() }, [load])
 
-  const loadCashPositions = useCallback(async () => {
+  const loadCashPositions = useCallback(async (options: { force?: boolean } = {}) => {
+    if (!lookupsLoaded) return
+
     const supabase = createClient()
-    let query = supabase
-      .from('cashflow_transactions')
-      .select('branch_id,cash_in,cash_out,branch:branches(id,name)')
-      .eq('status', 'active')
-      .lte('transaction_date', endDate)
+    const cacheKey = `cash-positions:${endDate}:${filterBranch || 'all'}:${branches.map((branch) => branch.id).join(',')}`
+    const cached = getCachedData<CashPosition[]>(cacheKey)
 
-    if (filterBranch) query = query.eq('branch_id', filterBranch)
-
-    const { data, error } = await query
-
-    if (error) {
-      toastTimerRef(`Gagal memuat posisi kas: ${error.message}`, 'error')
-      setCashPositions([])
-      return
+    if (cached && !options.force) {
+      setCashPositions(cached)
     }
 
-    const rows = (data || []) as unknown as CashPositionRow[]
-    const positions = new Map<string, Omit<CashPosition, 'balance'>>()
-    const visibleBranches = filterBranch
-      ? branches.filter((branch) => branch.id === filterBranch)
-      : branches
+    const positions = await getOrFetchCached<CashPosition[]>(
+      cacheKey,
+      async () => {
+        let query = supabase
+          .from('cashflow_transactions')
+          .select('branch_id,cash_in,cash_out,branch:branches(id,name)')
+          .eq('status', 'active')
+          .lte('transaction_date', endDate)
 
-    visibleBranches.forEach((branch) => {
-      positions.set(branch.id, {
-        branchId: branch.id,
-        branchName: branch.name,
-        cashIn: 0,
-        cashOut: 0,
-      })
-    })
+        if (filterBranch) query = query.eq('branch_id', filterBranch)
 
-    rows.forEach((row) => {
-      const branchId = row.branch_id
-      const existing = positions.get(branchId) ?? {
-        branchId,
-        branchName: row.branch?.name || 'Cabang',
-        cashIn: 0,
-        cashOut: 0,
-      }
+        const { data, error } = await query
 
-      existing.cashIn += row.cash_in || 0
-      existing.cashOut += row.cash_out || 0
-      positions.set(branchId, existing)
-    })
+        if (error) {
+          toastTimerRef(`Gagal memuat posisi kas: ${error.message}`, 'error')
+          return []
+        }
 
-    setCashPositions(
-      Array.from(positions.values())
-        .map((position) => ({
-          ...position,
-          balance: position.cashIn - position.cashOut,
-        }))
-        .sort((a, b) => a.branchName.localeCompare(b.branchName))
+        const rows = (data || []) as unknown as CashPositionRow[]
+        const positions = new Map<string, Omit<CashPosition, 'balance'>>()
+        const visibleBranches = filterBranch
+          ? branches.filter((branch) => branch.id === filterBranch)
+          : branches
+
+        visibleBranches.forEach((branch) => {
+          positions.set(branch.id, {
+            branchId: branch.id,
+            branchName: branch.name,
+            cashIn: 0,
+            cashOut: 0,
+          })
+        })
+
+        rows.forEach((row) => {
+          const branchId = row.branch_id
+          const existing = positions.get(branchId) ?? {
+            branchId,
+            branchName: row.branch?.name || 'Cabang',
+            cashIn: 0,
+            cashOut: 0,
+          }
+
+          existing.cashIn += row.cash_in || 0
+          existing.cashOut += row.cash_out || 0
+          positions.set(branchId, existing)
+        })
+
+        return Array.from(positions.values())
+          .map((position) => ({
+            ...position,
+            balance: position.cashIn - position.cashOut,
+          }))
+          .sort((a, b) => a.branchName.localeCompare(b.branchName))
+      },
+      { ttlMs: 60_000, force: options.force || Boolean(cached) }
     )
-  }, [branches, endDate, filterBranch, toastTimerRef])
+
+    setCashPositions(positions)
+  }, [branches, endDate, filterBranch, lookupsLoaded, toastTimerRef])
 
   useEffect(() => { loadCashPositions() }, [loadCashPositions])
 
   useEffect(() => {
     async function init() {
       const supabase = createClient()
-      const [{ data: br }, { data: cat }, { data: { user } }] = await Promise.all([
-        supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name'),
-        supabase.from('cashflow_categories').select('id,name,default_type').eq('is_active', true).is('deleted_at', null).order('name'),
-        supabase.auth.getUser(),
+      const [br, cat, { data: { session } }] = await Promise.all([
+        getOrFetchCached<Pick<Branch, 'id' | 'name'>[]>(
+          'branches:active',
+          async () => {
+            const { data } = await supabase.from('branches').select('id,name').eq('is_active', true).is('deleted_at', null).order('name')
+            return data || []
+          },
+          { ttlMs: 5 * 60_000 }
+        ),
+        getOrFetchCached<Pick<CashflowCategory, 'id' | 'name' | 'default_type'>[]>(
+          'cashflow-categories:active',
+          async () => {
+            const { data } = await supabase.from('cashflow_categories').select('id,name,default_type').eq('is_active', true).is('deleted_at', null).order('name')
+            return data || []
+          },
+          { ttlMs: 5 * 60_000 }
+        ),
+        supabase.auth.getSession(),
       ])
-      setBranches(br || [])
-      setCategories(cat || [])
-      if (user) {
-        const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      setBranches(br)
+      setCategories(cat)
+      setLookupsLoaded(true)
+      if (session?.user) {
+        const prof = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setProfile(prof)
       }
     }
@@ -229,7 +284,8 @@ export default function CashflowPage() {
   async function onSubmit(data: CashflowFormData) {
     setSaving(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
 
     const isCashIn = data.transaction_type === 'cash_in'
     const payload = {
@@ -288,15 +344,17 @@ export default function CashflowPage() {
     setSaving(false)
     setModalOpen(false)
     toastTimerRef(editTx ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil ditambahkan.', 'success')
-    load()
-    loadCashPositions()
+    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    load({ force: true })
+    loadCashPositions({ force: true })
   }
 
   async function handleVoid() {
     if (!voidTarget) return
     setSaving(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     const { error: voidError } = await supabase
       .from('cashflow_transactions')
       .update({ status: 'void' as const, updated_by: user?.id ?? null })
@@ -321,8 +379,9 @@ export default function CashflowPage() {
     setSaving(false)
     setVoidTarget(null)
     toastTimerRef('Transaksi berhasil divoid.', 'success')
-    load()
-    loadCashPositions()
+    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    load({ force: true })
+    loadCashPositions({ force: true })
   }
 
   async function handleDelete() {
@@ -342,7 +401,8 @@ export default function CashflowPage() {
 
     setSaving(true)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
     const now = new Date().toISOString()
 
     const { error: auditError } = await supabase.from('audit_logs').insert({
@@ -376,8 +436,9 @@ export default function CashflowPage() {
     setDeleteTarget(null)
     setDeleteReason('')
     toastTimerRef('Transaksi void berhasil dihapus permanen.', 'success')
-    load()
-    loadCashPositions()
+    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    load({ force: true })
+    loadCashPositions({ force: true })
   }
 
   const activeTx = transactions.filter((t) => t.status === 'active')
@@ -426,7 +487,7 @@ export default function CashflowPage() {
           <SelectFilter value={filterBranch} onChange={setFilterBranch} placeholder="Semua Cabang" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
           <SelectFilter value={filterType} onChange={setFilterType} placeholder="Semua Tipe" options={[{ value: 'cash_in', label: 'Cash In' }, { value: 'cash_out', label: 'Cash Out' }]} />
           <SelectFilter value={filterCat} onChange={setFilterCat} placeholder="Semua Kategori" options={categories.map((c) => ({ value: c.id, label: c.name }))} />
-          <button onClick={() => { load(); loadCashPositions() }} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
+          <button onClick={() => { load({ force: true }); loadCashPositions({ force: true }) }} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
         </div>

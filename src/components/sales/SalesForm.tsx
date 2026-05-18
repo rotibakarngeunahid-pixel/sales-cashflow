@@ -9,6 +9,7 @@ import { formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import type { Branch, SalesReport } from '@/types/database'
 import { createClient } from '@/lib/supabase/client'
 import { ChevronDown, ChevronUp, Info, CheckCircle2, Send } from 'lucide-react'
+import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 interface SalesFormProps {
   initialData?: SalesReport | null
@@ -141,13 +142,21 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   useEffect(() => {
     async function loadBranches() {
       const supabase = createClient()
-      const { data } = await supabase
-        .from('branches')
-        .select('*')
-        .eq('is_active', true)
-        .is('deleted_at', null)
-        .order('name')
-      setBranches(data || [])
+      const data = await getOrFetchCached<Branch[]>(
+        'branches:active-full',
+        async () => {
+          const { data } = await supabase
+            .from('branches')
+            .select('*')
+            .eq('is_active', true)
+            .is('deleted_at', null)
+            .order('name')
+
+          return data || []
+        },
+        { ttlMs: 5 * 60_000 }
+      )
+      setBranches(data)
     }
     loadBranches()
   }, [])
@@ -156,7 +165,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     setSaving(true)
     setError(null)
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { session } } = await supabase.auth.getSession()
+    const user = session?.user
 
     const computed = calculateSales({
       cash: Number(data.cash),
@@ -228,6 +238,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       })
 
       setSaving(false)
+      invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:|cashflow:|cash-positions:)/)
       const isDraftToSubmit = initialData.status === 'draft' && newStatus === 'submitted'
       const isSubmitToDraft = initialData.status === 'submitted' && newStatus === 'draft'
       const msg = isDraftToSubmit
@@ -264,6 +275,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       }
 
       setSaving(false)
+      invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
       const msg = statusToCreate === 'submitted'
         ? 'Penjualan berhasil disubmit!'
         : 'Draft berhasil disimpan.'

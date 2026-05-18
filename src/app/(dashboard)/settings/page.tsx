@@ -7,6 +7,7 @@ import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { User, Lock, CheckCircle } from 'lucide-react'
+import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 
 const profileSchema = z.object({
   full_name: z.string().min(1, 'Nama wajib diisi'),
@@ -36,9 +37,16 @@ export default function SettingsPage() {
   useEffect(() => {
     async function load() {
       const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        const data = await getOrFetchCached<Profile | null>(
+          `profile:${session.user.id}`,
+          async () => {
+            const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+            return data
+          },
+          { ttlMs: 5 * 60_000 }
+        )
         setProfile(data)
         profileForm.reset({ full_name: data?.full_name || '' })
       }
@@ -58,6 +66,7 @@ export default function SettingsPage() {
     } else {
       setSuccess('Profil berhasil diperbarui.')
       setProfile({ ...profile, full_name: data.full_name })
+      invalidateCachedData(/^profile:/)
     }
     setSaving(false)
   }
