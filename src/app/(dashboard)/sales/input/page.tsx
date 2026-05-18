@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2 } from 'lucide-react'
 import SalesForm from '@/components/sales/SalesForm'
+import SalesBulkImport from '@/components/sales/SalesBulkImport'
 
 const REPORTS_PATH = '/sales/reports'
 const SALES_REPORTS_TOAST_KEY = 'salesReportsToast'
@@ -80,6 +81,8 @@ export default function SalesInputPage() {
           <p className="mt-1 text-sm font-semibold text-orange-950">Draft → Submit → Post (Final)</p>
         </div>
       </div>
+
+      <SalesBulkImport onSuccess={handleSuccess} />
 
       <div className="card p-4 sm:p-5">
         <SalesForm
