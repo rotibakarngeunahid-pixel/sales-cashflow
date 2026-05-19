@@ -264,36 +264,68 @@ function MetricCard({
 }
 
 function BusinessSummaryCard({ summary }: { summary: BusinessSummary }) {
-  const toneClass = {
-    good: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-    warning: 'border-amber-100 bg-amber-50 text-amber-700',
-    danger: 'border-red-100 bg-red-50 text-red-700',
-    neutral: 'border-blue-100 bg-blue-50 text-blue-700',
+  const toneStyle = {
+    good: {
+      accent: 'bg-emerald-500',
+      badge: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+      icon: 'bg-emerald-50 text-emerald-600 ring-emerald-100',
+    },
+    warning: {
+      accent: 'bg-amber-500',
+      badge: 'bg-amber-50 text-amber-700 ring-amber-100',
+      icon: 'bg-amber-50 text-amber-600 ring-amber-100',
+    },
+    danger: {
+      accent: 'bg-red-500',
+      badge: 'bg-red-50 text-red-700 ring-red-100',
+      icon: 'bg-red-50 text-red-600 ring-red-100',
+    },
+    neutral: {
+      accent: 'bg-blue-500',
+      badge: 'bg-blue-50 text-blue-700 ring-blue-100',
+      icon: 'bg-blue-50 text-blue-600 ring-blue-100',
+    },
   }[summary.tone]
+  const statusIcon = summary.tone === 'danger'
+    ? <AlertTriangle className="h-5 w-5" />
+    : summary.tone === 'warning'
+      ? <Scale className="h-5 w-5" />
+      : summary.tone === 'neutral'
+        ? <BarChart3 className="h-5 w-5" />
+        : <ArrowUpRight className="h-5 w-5" />
 
   return (
-    <section className={cn('rounded-2xl border p-5 shadow-sm shadow-slate-900/5', toneClass)}>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em]">
-              {summary.badge}
-            </span>
-            <span className="text-xs font-semibold opacity-80">Ringkasan kondisi usaha</span>
+    <section className="card overflow-hidden">
+      <div className={cn('h-1.5', toneStyle.accent)} />
+      <div className="p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className={cn('flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl ring-1', toneStyle.icon)}>
+            {statusIcon}
           </div>
-          <h3 className="mt-3 text-xl font-extrabold text-slate-950">{summary.title}</h3>
-          <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-700">{summary.description}</p>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn('rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ring-1', toneStyle.badge)}>
+                {summary.badge}
+              </span>
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Ringkasan Usaha</span>
+            </div>
+            <h3 className="mt-2 text-xl font-extrabold leading-tight text-slate-950">{summary.title}</h3>
+          </div>
         </div>
 
-        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 lg:max-w-3xl">
-          {summary.points.map((point) => (
-            <div key={point.label} className="rounded-xl bg-white/75 p-3">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{point.label}</p>
-              <p className="mt-1 overflow-x-auto whitespace-nowrap text-sm font-extrabold text-slate-950 text-rupiah scrollbar-thin">
-                {point.value}
-              </p>
-            </div>
-          ))}
+        <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(360px,460px)] lg:items-start">
+          <p className="max-w-4xl text-sm leading-6 text-slate-700">{summary.description}</p>
+
+          <dl className="grid grid-cols-2 gap-x-5 gap-y-4 lg:border-l lg:border-slate-100 lg:pl-5">
+            {summary.points.map((point) => (
+              <div key={point.label} className="min-w-0">
+                <dt className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{point.label}</dt>
+                <dd className="mt-1 overflow-x-auto whitespace-nowrap text-base font-extrabold text-slate-950 text-rupiah scrollbar-thin">
+                  {point.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
         </div>
       </div>
     </section>
@@ -831,7 +863,7 @@ export default function CashflowAnalysisPage() {
       return {
         title: 'Usaha sedang rugi pada periode ini',
         badge: 'Rugi',
-        description: `Untuk ${scope}, pengeluaran ${formatRupiah(summary.expense)} lebih besar daripada income ${formatRupiah(summary.grossIncome)}. Rugi bersih tercatat ${formatRupiah(summary.netProfit)} dengan rasio beban ${formatPercentage(summary.expenseRatio)}. Prioritas utama adalah menekan kategori beban terbesar dan mengecek cabang yang profitnya negatif.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, beban ${formatRupiah(summary.expense)} melebihi income ${formatRupiah(summary.grossIncome)}, sehingga rugi bersih menjadi ${formatRupiah(summary.netProfit)}. Prioritasnya adalah menekan beban terbesar dan mengecek cabang dengan profit negatif.${expenseText}${branchText}${pendingText}`,
         tone: 'danger',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
@@ -844,9 +876,9 @@ export default function CashflowAnalysisPage() {
 
     if (summary.profitMargin >= 50 && summary.expenseRatio <= 35) {
       return {
-        title: 'Kondisi usaha sangat sehat',
+        title: 'Income kuat, beban rendah',
         badge: 'Sangat sehat',
-        description: `Untuk ${scope}, pendapatan sangat besar dibanding pengeluaran. Income mencapai ${formatRupiah(summary.grossIncome)}, sedangkan beban hanya ${formatRupiah(summary.expense)} atau ${formatPercentage(summary.expenseRatio)} dari income. Profit bersih ${formatRupiah(summary.netProfit)} dengan margin ${formatPercentage(summary.profitMargin)}, sehingga cashflow periode ini sangat kuat.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, income mencapai ${formatRupiah(summary.grossIncome)} dan beban hanya ${formatRupiah(summary.expense)} (${formatPercentage(summary.expenseRatio)} dari income). Profit bersih ${formatRupiah(summary.netProfit)} dengan margin ${formatPercentage(summary.profitMargin)}, jadi cashflow periode ini sangat kuat.${expenseText}${branchText}${pendingText}`,
         tone: 'good',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
@@ -861,7 +893,7 @@ export default function CashflowAnalysisPage() {
       return {
         title: 'Kondisi usaha cukup sehat',
         badge: 'Sehat',
-        description: `Untuk ${scope}, usaha masih menghasilkan profit ${formatRupiah(summary.netProfit)} dari income ${formatRupiah(summary.grossIncome)}. Rasio beban berada di ${formatPercentage(summary.expenseRatio)}, jadi margin masih positif tetapi tetap perlu dipantau agar pengeluaran tidak naik terlalu cepat.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, usaha menghasilkan profit ${formatRupiah(summary.netProfit)} dari income ${formatRupiah(summary.grossIncome)}. Rasio beban ${formatPercentage(summary.expenseRatio)}, sehingga margin masih sehat tetapi tetap perlu dipantau agar biaya tidak naik terlalu cepat.${expenseText}${branchText}${pendingText}`,
         tone: 'good',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
@@ -875,7 +907,7 @@ export default function CashflowAnalysisPage() {
     return {
       title: 'Profit masih positif, tetapi margin tipis',
       badge: 'Perlu kontrol',
-      description: `Untuk ${scope}, profit bersih masih positif di ${formatRupiah(summary.netProfit)}, tetapi margin hanya ${formatPercentage(summary.profitMargin)} karena beban sudah mencapai ${formatPercentage(summary.expenseRatio)} dari income. Fokus kontrol biaya dan evaluasi kategori beban terbesar sebelum margin turun lebih jauh.${expenseText}${branchText}${pendingText}`,
+      description: `Untuk ${scope}, profit masih positif di ${formatRupiah(summary.netProfit)}, tetapi margin hanya ${formatPercentage(summary.profitMargin)} karena beban sudah mencapai ${formatPercentage(summary.expenseRatio)} dari income. Fokus kontrol biaya sebelum margin turun lebih jauh.${expenseText}${branchText}${pendingText}`,
       tone: 'warning',
       points: [
         { label: 'Income', value: formatRupiah(summary.grossIncome) },
