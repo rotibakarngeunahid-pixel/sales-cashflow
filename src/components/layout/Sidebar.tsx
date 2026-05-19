@@ -7,6 +7,7 @@ import {
   PlusSquare,
   FileText,
   Wallet,
+  BarChart3,
   Tag,
   Building2,
   Users,
@@ -41,6 +42,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: 'Keuangan',
     items: [
       { href: '/cashflow', label: 'Cashflow', icon: Wallet },
+      { href: '/cashflow/analysis', label: 'Analisa Cashflow', icon: BarChart3 },
       { href: '/cashflow/categories', label: 'Kategori Cashflow', icon: Tag },
     ],
   },
