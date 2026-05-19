@@ -109,6 +109,14 @@ type Insight = {
   icon: ReactNode
 }
 
+type BusinessSummary = {
+  title: string
+  badge: string
+  description: string
+  tone: 'good' | 'warning' | 'danger' | 'neutral'
+  points: { label: string; value: string }[]
+}
+
 function toNumber(value: number | null | undefined) {
   return Number(value ?? 0)
 }
@@ -238,18 +246,57 @@ function MetricCard({
   }[tone]
 
   return (
-    <div className="card p-4">
+    <div className="card h-full p-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">{title}</p>
-          <p className="mt-2 break-words text-2xl font-extrabold leading-tight text-slate-950 text-rupiah">{value}</p>
-          {subtitle && <p className="mt-1 text-xs font-medium text-slate-500">{subtitle}</p>}
+          <p className="mt-2 overflow-x-auto whitespace-nowrap pb-0.5 text-xl font-extrabold leading-tight text-slate-950 text-rupiah scrollbar-thin 2xl:text-2xl">
+            {value}
+          </p>
+          {subtitle && <p className="mt-1 break-words text-xs font-medium leading-5 text-slate-500">{subtitle}</p>}
         </div>
         <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border', toneClass)}>
           {icon}
         </div>
       </div>
     </div>
+  )
+}
+
+function BusinessSummaryCard({ summary }: { summary: BusinessSummary }) {
+  const toneClass = {
+    good: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    warning: 'border-amber-100 bg-amber-50 text-amber-700',
+    danger: 'border-red-100 bg-red-50 text-red-700',
+    neutral: 'border-blue-100 bg-blue-50 text-blue-700',
+  }[summary.tone]
+
+  return (
+    <section className={cn('rounded-2xl border p-5 shadow-sm shadow-slate-900/5', toneClass)}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em]">
+              {summary.badge}
+            </span>
+            <span className="text-xs font-semibold opacity-80">Ringkasan kondisi usaha</span>
+          </div>
+          <h3 className="mt-3 text-xl font-extrabold text-slate-950">{summary.title}</h3>
+          <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-700">{summary.description}</p>
+        </div>
+
+        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 lg:max-w-3xl">
+          {summary.points.map((point) => (
+            <div key={point.label} className="rounded-xl bg-white/75 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{point.label}</p>
+              <p className="mt-1 overflow-x-auto whitespace-nowrap text-sm font-extrabold text-slate-950 text-rupiah scrollbar-thin">
+                {point.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -748,6 +795,97 @@ export default function CashflowAnalysisPage() {
     return rows.slice(0, 6)
   }, [branchMetrics, expenseCategories, summary])
 
+  const businessSummary = useMemo<BusinessSummary>(() => {
+    const selectedBranch = filterBranch
+      ? branches.find((branch) => branch.id === filterBranch)
+      : null
+    const scope = selectedBranch ? `cabang ${selectedBranch.name}` : 'semua cabang'
+    const topExpense = expenseCategories[0]
+    const topBranch = branchMetrics.find((branch) => branch.revenue > 0)
+    const pendingText = summary.pendingReportCount > 0
+      ? ` Ada ${summary.pendingReportCount} laporan belum posted senilai ${formatRupiah(summary.pendingSalesValue)}, jadi angka final bisa berubah setelah laporan diposting.`
+      : ''
+    const expenseText = topExpense
+      ? ` Pengeluaran terbesar adalah ${topExpense.name} sebesar ${formatRupiah(topExpense.amount)} (${formatPercentage(topExpense.pctOfExpense)} dari total beban).`
+      : ' Tidak ada pengeluaran aktif pada periode ini.'
+    const branchText = !selectedBranch && topBranch
+      ? ` Kontributor sales terbesar adalah ${topBranch.branchName} dengan porsi ${formatPercentage(topBranch.revenueShare)} dari revenue posted.`
+      : ''
+
+    if (summary.grossIncome <= 0) {
+      return {
+        title: 'Belum ada income yang bisa dianalisa',
+        badge: 'Perlu data',
+        description: `Pada periode ini ${scope} belum memiliki sales posted atau pendapatan lain. Cashflow belum bisa dinilai sebagai untung atau rugi sampai laporan penjualan diposting dan transaksi kas tercatat.${pendingText}`,
+        tone: 'neutral',
+        points: [
+          { label: 'Income', value: formatRupiah(summary.grossIncome) },
+          { label: 'Beban', value: formatRupiah(summary.expense) },
+          { label: 'Profit', value: formatRupiah(summary.netProfit) },
+          { label: 'Kas', value: formatRupiah(summary.cashPosition) },
+        ],
+      }
+    }
+
+    if (summary.netProfit < 0) {
+      return {
+        title: 'Usaha sedang rugi pada periode ini',
+        badge: 'Rugi',
+        description: `Untuk ${scope}, pengeluaran ${formatRupiah(summary.expense)} lebih besar daripada income ${formatRupiah(summary.grossIncome)}. Rugi bersih tercatat ${formatRupiah(summary.netProfit)} dengan rasio beban ${formatPercentage(summary.expenseRatio)}. Prioritas utama adalah menekan kategori beban terbesar dan mengecek cabang yang profitnya negatif.${expenseText}${branchText}${pendingText}`,
+        tone: 'danger',
+        points: [
+          { label: 'Income', value: formatRupiah(summary.grossIncome) },
+          { label: 'Beban', value: formatRupiah(summary.expense) },
+          { label: 'Margin', value: formatPercentage(summary.profitMargin) },
+          { label: 'Net Cashflow', value: formatRupiah(summary.netCashflow) },
+        ],
+      }
+    }
+
+    if (summary.profitMargin >= 50 && summary.expenseRatio <= 35) {
+      return {
+        title: 'Kondisi usaha sangat sehat',
+        badge: 'Sangat sehat',
+        description: `Untuk ${scope}, pendapatan sangat besar dibanding pengeluaran. Income mencapai ${formatRupiah(summary.grossIncome)}, sedangkan beban hanya ${formatRupiah(summary.expense)} atau ${formatPercentage(summary.expenseRatio)} dari income. Profit bersih ${formatRupiah(summary.netProfit)} dengan margin ${formatPercentage(summary.profitMargin)}, sehingga cashflow periode ini sangat kuat.${expenseText}${branchText}${pendingText}`,
+        tone: 'good',
+        points: [
+          { label: 'Income', value: formatRupiah(summary.grossIncome) },
+          { label: 'Beban', value: formatRupiah(summary.expense) },
+          { label: 'Profit', value: formatRupiah(summary.netProfit) },
+          { label: 'Margin', value: formatPercentage(summary.profitMargin) },
+        ],
+      }
+    }
+
+    if (summary.profitMargin >= 20) {
+      return {
+        title: 'Kondisi usaha cukup sehat',
+        badge: 'Sehat',
+        description: `Untuk ${scope}, usaha masih menghasilkan profit ${formatRupiah(summary.netProfit)} dari income ${formatRupiah(summary.grossIncome)}. Rasio beban berada di ${formatPercentage(summary.expenseRatio)}, jadi margin masih positif tetapi tetap perlu dipantau agar pengeluaran tidak naik terlalu cepat.${expenseText}${branchText}${pendingText}`,
+        tone: 'good',
+        points: [
+          { label: 'Income', value: formatRupiah(summary.grossIncome) },
+          { label: 'Beban', value: formatRupiah(summary.expense) },
+          { label: 'Profit', value: formatRupiah(summary.netProfit) },
+          { label: 'Kas', value: formatRupiah(summary.cashPosition) },
+        ],
+      }
+    }
+
+    return {
+      title: 'Profit masih positif, tetapi margin tipis',
+      badge: 'Perlu kontrol',
+      description: `Untuk ${scope}, profit bersih masih positif di ${formatRupiah(summary.netProfit)}, tetapi margin hanya ${formatPercentage(summary.profitMargin)} karena beban sudah mencapai ${formatPercentage(summary.expenseRatio)} dari income. Fokus kontrol biaya dan evaluasi kategori beban terbesar sebelum margin turun lebih jauh.${expenseText}${branchText}${pendingText}`,
+      tone: 'warning',
+      points: [
+        { label: 'Income', value: formatRupiah(summary.grossIncome) },
+        { label: 'Beban', value: formatRupiah(summary.expense) },
+        { label: 'Margin', value: formatPercentage(summary.profitMargin) },
+        { label: 'Net Cashflow', value: formatRupiah(summary.netCashflow) },
+      ],
+    }
+  }, [branchMetrics, branches, expenseCategories, filterBranch, summary])
+
   async function handleExport() {
     const [XLSX, { saveAs }] = await Promise.all([
       import('xlsx'),
@@ -876,7 +1014,7 @@ export default function CashflowAnalysisPage() {
         <PageLoading />
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
             <MetricCard
               title="Revenue Posted"
               value={formatRupiah(summary.revenue)}
@@ -937,6 +1075,8 @@ export default function CashflowAnalysisPage() {
               tone="neutral"
             />
           </div>
+
+          <BusinessSummaryCard summary={businessSummary} />
 
           {insights.length > 0 && (
             <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1056,7 +1196,7 @@ export default function CashflowAnalysisPage() {
             ) : (
               <>
                 <div className="hidden overflow-x-auto lg:block">
-                  <table className="w-full table-fixed">
+                  <table className="w-full min-w-[1120px] table-auto">
                     <thead>
                       <tr>
                         <th className="table-header w-[16%]">Cabang</th>
@@ -1073,16 +1213,16 @@ export default function CashflowAnalysisPage() {
                       {branchMetrics.map((branch) => (
                         <tr key={branch.branchId} className="hover:bg-slate-50">
                           <td className="table-cell font-semibold"><div className="truncate">{branch.branchName}</div></td>
-                          <td className="table-cell text-right font-medium text-rupiah"><div className="truncate">{formatRupiah(branch.revenue)}</div></td>
-                          <td className="table-cell text-right font-medium text-rupiah"><div className="truncate">{formatRupiah(branch.otherIncome)}</div></td>
-                          <td className="table-cell text-right font-medium text-red-600 text-rupiah"><div className="truncate">{formatRupiah(branch.expense)}</div></td>
+                          <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(branch.revenue)}</td>
+                          <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(branch.otherIncome)}</td>
+                          <td className="table-cell text-right font-medium text-red-600 text-rupiah">{formatRupiah(branch.expense)}</td>
                           <td className={cn('table-cell text-right font-bold text-rupiah', branch.netProfit >= 0 ? 'text-blue-600' : 'text-red-600')}>
-                            <div className="truncate">{formatRupiah(branch.netProfit)}</div>
+                            {formatRupiah(branch.netProfit)}
                           </td>
                           <td className="table-cell text-right font-semibold">{formatPercentage(branch.profitMargin)}</td>
                           <td className="table-cell text-right font-semibold">{formatPercentage(branch.expenseRatio)}</td>
                           <td className={cn('table-cell text-right font-bold text-rupiah', branch.cashPosition >= 0 ? 'text-slate-700' : 'text-amber-600')}>
-                            <div className="truncate">{formatRupiah(branch.cashPosition)}</div>
+                            {formatRupiah(branch.cashPosition)}
                           </td>
                         </tr>
                       ))}
@@ -1105,17 +1245,17 @@ export default function CashflowAnalysisPage() {
                           {formatPercentage(branch.profitMargin)}
                         </span>
                       </div>
-                      <p className={cn('mt-3 break-words text-xl font-extrabold text-rupiah', branch.netProfit >= 0 ? 'text-blue-600' : 'text-red-600')}>
+                      <p className={cn('mt-3 overflow-x-auto whitespace-nowrap pb-0.5 text-xl font-extrabold text-rupiah scrollbar-thin', branch.netProfit >= 0 ? 'text-blue-600' : 'text-red-600')}>
                         {formatRupiah(branch.netProfit)}
                       </p>
                       <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                         <div>
                           <p className="text-xs text-slate-500">Revenue</p>
-                          <p className="break-words font-semibold text-rupiah">{formatRupiah(branch.revenue)}</p>
+                          <p className="overflow-x-auto whitespace-nowrap font-semibold text-rupiah scrollbar-thin">{formatRupiah(branch.revenue)}</p>
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-slate-500">Beban</p>
-                          <p className="break-words font-semibold text-red-600 text-rupiah">{formatRupiah(branch.expense)}</p>
+                          <p className="overflow-x-auto whitespace-nowrap font-semibold text-red-600 text-rupiah scrollbar-thin">{formatRupiah(branch.expense)}</p>
                         </div>
                         <div>
                           <p className="text-xs text-slate-500">Rasio Beban</p>
@@ -1123,7 +1263,7 @@ export default function CashflowAnalysisPage() {
                         </div>
                         <div className="text-right">
                           <p className="text-xs text-slate-500">Posisi Kas</p>
-                          <p className="break-words font-semibold text-rupiah">{formatRupiah(branch.cashPosition)}</p>
+                          <p className="overflow-x-auto whitespace-nowrap font-semibold text-rupiah scrollbar-thin">{formatRupiah(branch.cashPosition)}</p>
                         </div>
                       </div>
                     </article>
@@ -1154,7 +1294,7 @@ export default function CashflowAnalysisPage() {
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-extrabold text-red-600 text-rupiah">{formatRupiah(category.amount)}</p>
+                          <p className="overflow-x-auto whitespace-nowrap text-sm font-extrabold text-red-600 text-rupiah scrollbar-thin">{formatRupiah(category.amount)}</p>
                           <p className="text-xs font-bold text-slate-500">{formatPercentage(category.pctOfExpense)}</p>
                         </div>
                       </div>
@@ -1176,8 +1316,8 @@ export default function CashflowAnalysisPage() {
               {largestExpenses.length === 0 ? (
                 <EmptyState title="Belum ada transaksi" description="Tidak ada cash out aktif pada filter ini." />
               ) : (
-                <div className="hidden md:block">
-                  <table className="w-full table-fixed">
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full min-w-[900px] table-auto">
                     <thead>
                       <tr>
                         <th className="table-header w-[15%]">Tanggal</th>
@@ -1200,7 +1340,7 @@ export default function CashflowAnalysisPage() {
                                 {tx.description && <p className="truncate text-xs text-slate-500">{tx.description}</p>}
                               </div>
                             </td>
-                            <td className="table-cell text-right font-bold text-red-600 text-rupiah"><div className="truncate">{formatRupiah(amount)}</div></td>
+                            <td className="table-cell text-right font-bold text-red-600 text-rupiah">{formatRupiah(amount)}</td>
                             <td className="table-cell text-right font-semibold">{formatPercentage(percent(amount, summary.expense))}</td>
                           </tr>
                         )
@@ -1227,7 +1367,7 @@ export default function CashflowAnalysisPage() {
                         </div>
                         <p className="mt-3 truncate text-sm font-bold text-slate-950">{tx.category?.name || 'Tanpa Kategori'}</p>
                         {tx.description && <p className="truncate text-xs text-slate-500">{tx.description}</p>}
-                        <p className="mt-2 break-words text-lg font-extrabold text-red-600 text-rupiah">{formatRupiah(amount)}</p>
+                        <p className="mt-2 overflow-x-auto whitespace-nowrap text-lg font-extrabold text-red-600 text-rupiah scrollbar-thin">{formatRupiah(amount)}</p>
                       </article>
                     )
                   })}
@@ -1254,7 +1394,7 @@ export default function CashflowAnalysisPage() {
                         {formatPercentage(category.pctOfIncome)}
                       </span>
                     </div>
-                    <p className="mt-3 break-words text-xl font-extrabold text-emerald-600 text-rupiah">{formatRupiah(category.amount)}</p>
+                    <p className="mt-3 overflow-x-auto whitespace-nowrap text-xl font-extrabold text-emerald-600 text-rupiah scrollbar-thin">{formatRupiah(category.amount)}</p>
                     <div className="mt-3">
                       <ProgressBar value={category.pctOfIncome} tone="green" />
                     </div>
