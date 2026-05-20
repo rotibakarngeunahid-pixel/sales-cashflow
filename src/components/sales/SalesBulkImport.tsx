@@ -1,48 +1,66 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Upload } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileSpreadsheet,
+  Info,
+  Loader2,
+  Upload,
+  X,
+  XCircle,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { formatDate, formatRupiah } from '@/lib/utils/format'
+import { formatRupiah } from '@/lib/utils/format'
 import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 import {
   buildSalesBulkTemplateCsv,
-  parseSalesBulkCsv,
+  buildSalesBulkTemplateXlsx,
+  checkDbDuplicates,
+  parseImportFile,
+  type ImportRowError,
   type ParsedSalesImportRow,
   type SalesImportParseResult,
 } from '@/lib/utils/sales-bulk-import'
 import type { Branch, Database } from '@/types/database'
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type SalesInsert = Database['public']['Tables']['sales_reports']['Insert']
+
+type Step = 'upload' | 'review' | 'result'
+
+interface ImportResult {
+  successCount: number
+  failureCount: number
+  skippedCount: number
+  message: string
+}
 
 interface SalesBulkImportProps {
   onSuccess: (message?: string) => void
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 const monthOptions = [
-  { value: 1, label: 'Januari' },
-  { value: 2, label: 'Februari' },
-  { value: 3, label: 'Maret' },
-  { value: 4, label: 'April' },
-  { value: 5, label: 'Mei' },
-  { value: 6, label: 'Juni' },
-  { value: 7, label: 'Juli' },
-  { value: 8, label: 'Agustus' },
-  { value: 9, label: 'September' },
-  { value: 10, label: 'Oktober' },
-  { value: 11, label: 'November' },
-  { value: 12, label: 'Desember' },
+  { value: 1, label: 'Januari' }, { value: 2, label: 'Februari' },
+  { value: 3, label: 'Maret' }, { value: 4, label: 'April' },
+  { value: 5, label: 'Mei' }, { value: 6, label: 'Juni' },
+  { value: 7, label: 'Juli' }, { value: 8, label: 'Agustus' },
+  { value: 9, label: 'September' }, { value: 10, label: 'Oktober' },
+  { value: 11, label: 'November' }, { value: 12, label: 'Desember' },
 ]
 
 function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
 }
 
-function downloadCsv(filename: string, csv: string) {
-  const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' })
+function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -92,129 +110,435 @@ function toInsertPayload(
   }
 }
 
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function StepIndicator({ step }: { step: Step }) {
+  const steps: { id: Step; label: string }[] = [
+    { id: 'upload', label: 'Upload File' },
+    { id: 'review', label: 'Review Data' },
+    { id: 'result', label: 'Hasil Import' },
+  ]
+  const activeIndex = steps.findIndex((s) => s.id === step)
+
+  return (
+    <div className="flex items-center gap-0">
+      {steps.map((s, i) => {
+        const isActive = s.id === step
+        const isDone = i < activeIndex
+        return (
+          <div key={s.id} className="flex items-center">
+            <div className="flex items-center gap-2">
+              <div
+                className={[
+                  'flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-all',
+                  isActive
+                    ? 'bg-gradient-to-r from-rbn-red to-rbn-orange text-white shadow-sm shadow-red-200'
+                    : isDone
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-slate-100 text-slate-400',
+                ].join(' ')}
+              >
+                {isDone ? <CheckCircle2 className="h-4 w-4" /> : i + 1}
+              </div>
+              <span
+                className={[
+                  'text-xs font-semibold hidden sm:block',
+                  isActive ? 'text-slate-900' : isDone ? 'text-emerald-600' : 'text-slate-400',
+                ].join(' ')}
+              >
+                {s.label}
+              </span>
+            </div>
+            {i < steps.length - 1 && (
+              <div
+                className={[
+                  'mx-3 h-px w-10 sm:w-16',
+                  i < activeIndex ? 'bg-emerald-400' : 'bg-slate-200',
+                ].join(' ')}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function IssuesBadge({ issues }: { issues: ImportRowError[] }) {
+  const errors = issues.filter((i) => i.severity === 'error').length
+  const warnings = issues.filter((i) => i.severity === 'warning').length
+  if (!errors && !warnings) return null
+  return (
+    <span className="flex items-center gap-1">
+      {errors > 0 && (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">
+          <XCircle className="h-3 w-3" />{errors}
+        </span>
+      )}
+      {warnings > 0 && (
+        <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+          <AlertTriangle className="h-3 w-3" />{warnings}
+        </span>
+      )}
+    </span>
+  )
+}
+
+// ─── Row Tooltip ──────────────────────────────────────────────────────────────
+
+function RowIssueTooltip({ issues }: { issues: ImportRowError[] }) {
+  const [open, setOpen] = useState(false)
+  if (!issues.length) return null
+  const hasError = issues.some((i) => i.severity === 'error')
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onClick={() => setOpen((v) => !v)}
+        className={[
+          'inline-flex h-5 w-5 items-center justify-center rounded-full text-white',
+          hasError ? 'bg-red-500' : 'bg-amber-400',
+        ].join(' ')}
+      >
+        {hasError ? <XCircle className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3 w-3" />}
+      </button>
+      {open && (
+        <div className="absolute left-6 top-0 z-50 w-64 rounded-xl border border-slate-200 bg-white p-2.5 shadow-lg">
+          {issues.map((iss, idx) => (
+            <div
+              key={idx}
+              className={[
+                'mb-1 last:mb-0 rounded-lg px-2 py-1 text-xs',
+                iss.severity === 'error'
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-amber-50 text-amber-700',
+              ].join(' ')}
+            >
+              <span className="font-bold">{iss.column}:</span> {iss.message}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Collapsible Issue Panel ──────────────────────────────────────────────────
+
+function IssuePanel({
+  title,
+  issues,
+  defaultOpen = true,
+  variant,
+}: {
+  title: string
+  issues: ImportRowError[]
+  defaultOpen?: boolean
+  variant: 'error' | 'warning' | 'info'
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  if (!issues.length) return null
+
+  const colorMap = {
+    error: 'border-red-200 bg-red-50 text-red-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    info: 'border-blue-200 bg-blue-50 text-blue-800',
+  }
+
+  return (
+    <div className={`rounded-xl border ${colorMap[variant]} overflow-hidden`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 font-semibold text-sm"
+      >
+        <span className="flex items-center gap-2">
+          {variant === 'error' && <XCircle className="h-4 w-4" />}
+          {variant === 'warning' && <AlertTriangle className="h-4 w-4" />}
+          {variant === 'info' && <Info className="h-4 w-4" />}
+          {title} ({issues.length})
+        </span>
+        {open ? <ChevronUp className="h-4 w-4 opacity-60" /> : <ChevronDown className="h-4 w-4 opacity-60" />}
+      </button>
+      {open && (
+        <ul className="border-t border-current/10 px-4 py-3 space-y-1.5 max-h-48 overflow-y-auto">
+          {issues.map((iss, idx) => (
+            <li key={idx} className="text-xs">
+              <span className="font-bold">Baris {iss.row} — {iss.column}:</span>{' '}
+              {iss.message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ─── Confirmation Modal ───────────────────────────────────────────────────────
+
+function ConfirmModal({
+  validCount,
+  skippedDbCount,
+  branchName,
+  status,
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  validCount: number
+  skippedDbCount: number
+  branchName: string
+  status: string
+  onConfirm: () => void
+  onCancel: () => void
+  loading: boolean
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-slide-up">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-r from-rbn-red to-rbn-orange">
+            <FileSpreadsheet className="h-5 w-5 text-white" />
+          </div>
+          <div>
+            <h3 className="font-extrabold text-slate-900">Konfirmasi Import</h3>
+            <p className="text-xs text-slate-500">Pastikan data sudah benar sebelum disimpan</p>
+          </div>
+        </div>
+
+        <div className="mb-5 space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+          <div className="flex justify-between">
+            <span className="text-slate-600">Data akan diimport</span>
+            <span className="font-bold text-emerald-600">{validCount} baris</span>
+          </div>
+          {skippedDbCount > 0 && (
+            <div className="flex justify-between">
+              <span className="text-slate-600">Dilewati (sudah ada di DB)</span>
+              <span className="font-bold text-slate-500">{skippedDbCount} baris</span>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-slate-600">Cabang</span>
+            <span className="font-bold text-slate-900">{branchName}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-600">Status</span>
+            <span className={`font-bold capitalize ${status === 'submitted' ? 'text-blue-600' : 'text-amber-600'}`}>
+              {status}
+            </span>
+          </div>
+        </div>
+
+        <p className="mb-5 text-xs text-slate-500">
+          Data yang sudah disimpan tidak dapat dibatalkan melalui fitur ini. Pastikan data sudah benar.
+        </p>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={loading}
+            className="btn-outline flex-1"
+          >
+            Batalkan
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={loading}
+            className="btn-primary flex-1"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Menyimpan...
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="h-4 w-4" />
+                Ya, Import Sekarang
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
   const today = new Date()
+
+  // ─ Config state ─
   const [branches, setBranches] = useState<Pick<Branch, 'id' | 'name'>[]>([])
   const [branchId, setBranchId] = useState('')
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
   const [status, setStatus] = useState<'draft' | 'submitted'>('draft')
-  const [rawCsv, setRawCsv] = useState('')
+
+  // ─ Wizard state ─
+  const [step, setStep] = useState<Step>('upload')
   const [fileName, setFileName] = useState('')
   const [parseResult, setParseResult] = useState<SalesImportParseResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [dbCheck, setDbCheck] = useState<{ existingDates: string[]; validRows: ParsedSalesImportRow[] } | null>(null)
+  const [checkingDb, setCheckingDb] = useState(false)
+
+  // ─ Import state ─
+  const [showConfirm, setShowConfirm] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ─ Load branches ─
   useEffect(() => {
-    async function loadBranches() {
-      const supabase = createClient()
-      const data = await getOrFetchCached<Pick<Branch, 'id' | 'name'>[]>(
-        'branches:active',
-        async () => {
-          const { data } = await supabase
-            .from('branches')
-            .select('id,name')
-            .eq('is_active', true)
-            .is('deleted_at', null)
-            .order('name')
-
-          return data || []
-        },
-        { ttlMs: 5 * 60_000 }
-      )
-
-      setBranches(data)
-    }
-
-    loadBranches()
+    const supabase = createClient()
+    getOrFetchCached<Pick<Branch, 'id' | 'name'>[]>(
+      'branches:active',
+      async () => {
+        const { data } = await supabase
+          .from('branches')
+          .select('id,name')
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .order('name')
+        return data || []
+      },
+      { ttlMs: 5 * 60_000 }
+    ).then(setBranches)
   }, [])
 
+  // ─ Trigger DB duplicate check when review step is reached ─
   useEffect(() => {
-    if (!rawCsv) {
-      setParseResult(null)
-      return
-    }
+    if (step !== 'review' || !parseResult || !branchId) return
+    setCheckingDb(true)
+    setDbCheck(null)
 
-    setParseResult(parseSalesBulkCsv(rawCsv, year))
-  }, [rawCsv, year])
-
-  const selectedBranch = branches.find((branch) => branch.id === branchId)
-
-  const previewTotals = useMemo(() => {
-    const rows = parseResult?.rows ?? []
-    return rows.reduce(
-      (acc, row) => ({
-        count: acc.count + 1,
-        grand: acc.grand + row.grand_total_nett_sales,
-      }),
-      { count: 0, grand: 0 }
+    const supabase = createClient()
+    const rowsWithoutInternalDups = parseResult.rows.filter(
+      (r) => !parseResult.internalDuplicateDates.includes(r.report_date)
     )
-  }, [parseResult])
+    checkDbDuplicates(rowsWithoutInternalDups, branchId, supabase)
+      .then(setDbCheck)
+      .catch((err) => setError(err?.message ?? 'Gagal memeriksa duplikat ke database.'))
+      .finally(() => setCheckingDb(false))
+  }, [step, parseResult, branchId])
 
-  function handleDownloadTemplate() {
+  const selectedBranch = branches.find((b) => b.id === branchId)
+
+  // ─ Stats ─
+  const stats = useMemo(() => {
+    if (!parseResult) return null
+    const allErrors = parseResult.allIssues.filter((i) => i.severity === 'error')
+    const allWarnings = parseResult.allIssues.filter((i) => i.severity === 'warning')
+    const rowsWithErrors = parseResult.rows.filter((r) =>
+      r.rowErrors.some((e) => e.severity === 'error')
+    )
+    const rowsWithoutErrors = parseResult.rows.filter((r) =>
+      r.rowErrors.every((e) => e.severity !== 'error')
+    )
+    const dbDupCount = dbCheck?.existingDates.length ?? 0
+    const importableRows = (dbCheck?.validRows ?? rowsWithoutErrors).filter(
+      (r) => r.rowErrors.every((e) => e.severity !== 'error')
+    )
+    const grandTotal = importableRows.reduce((s, r) => s + r.grand_total_nett_sales, 0)
+
+    return {
+      total: parseResult.rows.length,
+      errorRows: rowsWithErrors.length,
+      warningOnlyRows: rowsWithoutErrors.filter((r) => r.rowErrors.some((e) => e.severity === 'warning')).length,
+      allErrors,
+      allWarnings,
+      importableRows,
+      grandTotal,
+      dbDupCount,
+    }
+  }, [parseResult, dbCheck])
+
+  // ─ Template download ─
+  function handleDownloadCsv() {
     const branchSlug = selectedBranch ? `-${slugify(selectedBranch.name)}` : ''
     const filename = `template-sales-${year}-${String(month).padStart(2, '0')}${branchSlug}.csv`
-    downloadCsv(filename, buildSalesBulkTemplateCsv(month, year))
+    const csv = buildSalesBulkTemplateCsv(month, year)
+    downloadBlob(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }), filename)
   }
 
-  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
+  function handleDownloadXlsx() {
+    const branchSlug = selectedBranch ? `-${slugify(selectedBranch.name)}` : ''
+    const filename = `template-sales-${year}-${String(month).padStart(2, '0')}${branchSlug}.xlsx`
+    const buffer = buildSalesBulkTemplateXlsx(month, year)
+    downloadBlob(
+      new Blob([buffer.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+      filename
+    )
+  }
+
+  // ─ File upload & parse ─
+  const handleFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      setError(null)
+
+      if (!file) { setFileName(''); setParseResult(null); return }
+
+      if (!branchId) {
+        setError('Pilih cabang terlebih dahulu sebelum upload file.')
+        if (fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
+
+      setFileName(file.name)
+      const result = await parseImportFile(file, year)
+      setParseResult(result)
+
+      if (result.fatalErrors.length > 0) {
+        setError(result.fatalErrors.join(' '))
+        return
+      }
+
+      if (result.rows.length === 0 && result.skippedEmptyRows === 0) {
+        setError('Tidak ada data yang dapat dibaca dari file.')
+        return
+      }
+
+      setStep('review')
+    },
+    [branchId, year]
+  )
+
+  // ─ Go back to upload ─
+  function handleBackToUpload() {
+    setStep('upload')
+    setParseResult(null)
+    setDbCheck(null)
+    setFileName('')
     setError(null)
-
-    if (!file) {
-      setRawCsv('')
-      setFileName('')
-      return
-    }
-
-    setFileName(file.name)
-    setRawCsv(await file.text())
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  // ─ Import handler ─
   async function handleImport() {
-    setError(null)
-
-    if (!branchId) {
-      setError('Cabang wajib dipilih.')
-      return
-    }
-
-    if (!parseResult || parseResult.rows.length === 0) {
-      setError('Tidak ada baris penjualan yang siap diimport.')
-      return
-    }
-
-    if (parseResult.errors.length > 0) {
-      setError('Perbaiki error CSV sebelum import.')
-      return
-    }
-
+    if (!stats?.importableRows.length || !branchId) return
+    setShowConfirm(false)
     setImporting(true)
+    setError(null)
 
     try {
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
       const userId = session?.user?.id ?? null
-      const dates = parseResult.rows.map((row) => row.report_date)
 
-      const { data: existing, error: existingError } = await supabase
-        .from('sales_reports')
-        .select('report_date,status')
-        .eq('branch_id', branchId)
-        .in('report_date', dates)
-        .neq('status', 'void')
+      const payload = stats.importableRows.map((row) =>
+        toInsertPayload(row, branchId, status, userId)
+      )
 
-      if (existingError) throw existingError
-
-      const existingDates = new Set((existing || []).map((row) => row.report_date))
-      const importRows = parseResult.rows.filter((row) => !existingDates.has(row.report_date))
-
-      if (importRows.length === 0) {
-        setError('Semua tanggal di CSV sudah memiliki laporan aktif untuk cabang ini.')
-        return
-      }
-
-      const payload = importRows.map((row) => toInsertPayload(row, branchId, status, userId))
       const { data: inserted, error: insertError } = await supabase
         .from('sales_reports')
         .insert(payload)
@@ -236,182 +560,492 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
         )
       }
 
-      invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
+      invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:|cashflow:|cash-positions:)/)
 
-      const skippedExisting = parseResult.rows.length - importRows.length
-      const message = [
-        `Import ${inserted?.length ?? importRows.length} laporan berhasil.`,
-        skippedExisting > 0 ? `${skippedExisting} tanggal dilewati karena sudah ada.` : '',
-      ].filter(Boolean).join(' ')
+      const dbDupCount = dbCheck?.existingDates.length ?? 0
+      const errorRowCount = stats.errorRows
+      const skippedTotal = dbDupCount + errorRowCount + (parseResult?.skippedEmptyRows ?? 0)
 
-      onSuccess(message)
+      setImportResult({
+        successCount: inserted?.length ?? payload.length,
+        failureCount: 0,
+        skippedCount: skippedTotal,
+        message: `${inserted?.length ?? payload.length} laporan berhasil diimport.`,
+      })
+      setStep('result')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import gagal diproses.')
-    } finally {
       setImporting(false)
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────────
+
   return (
-    <div className="card p-4 sm:p-5 space-y-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="page-kicker">Bulk Input</p>
-          <h3 className="text-lg font-extrabold text-slate-950">Import Penjualan CSV</h3>
-        </div>
-        <button
-          type="button"
-          onClick={handleDownloadTemplate}
-          className="btn-outline flex w-full items-center gap-2 text-sm lg:w-auto"
-        >
-          <Download className="h-4 w-4" />
-          Download Template
-        </button>
+    <div className="space-y-5">
+      {/* Step indicator */}
+      <div className="flex items-center justify-between">
+        <StepIndicator step={step} />
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_0.6fr_0.8fr_0.8fr]">
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Cabang
-          </label>
-          <select value={branchId} onChange={(event) => setBranchId(event.target.value)} className="input-field">
-            <option value="">Pilih cabang...</option>
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Tahun
-          </label>
-          <input
-            type="number"
-            min={2000}
-            max={2100}
-            value={year}
-            onChange={(event) => setYear(Number(event.target.value))}
-            className="input-field"
-          />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Bulan Template
-          </label>
-          <select value={month} onChange={(event) => setMonth(Number(event.target.value))} className="input-field">
-            {monthOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-            Status Import
-          </label>
-          <select value={status} onChange={(event) => setStatus(event.target.value as 'draft' | 'submitted')} className="input-field">
-            <option value="draft">Draft</option>
-            <option value="submitted">Submitted</option>
-          </select>
-        </div>
-      </div>
+      {/* ── STEP 1: UPLOAD ── */}
+      {step === 'upload' && (
+        <div className="card p-5 space-y-5 animate-fade-in">
+          <div>
+            <p className="page-kicker">Langkah 1</p>
+            <h3 className="text-lg font-extrabold text-slate-950">Konfigurasi & Upload File</h3>
+            <p className="text-sm text-slate-500 mt-0.5">Pilih cabang, download template, isi data, lalu upload.</p>
+          </div>
 
-      <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center transition-colors hover:border-rbn-orange hover:bg-orange-50">
-        <Upload className="h-5 w-5 text-slate-400" />
-        <span className="text-sm font-bold text-slate-700">
-          {fileName || 'Pilih file CSV'}
-        </span>
-        <input type="file" accept=".csv,text/csv" onChange={handleFileChange} className="sr-only" />
-      </label>
-
-      {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {parseResult && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
-              <p className="text-xs font-semibold text-slate-500">Baris Siap Import</p>
-              <p className="mt-1 text-xl font-extrabold text-slate-950">{previewTotals.count}</p>
+          {/* Config grid */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="lg:col-span-2">
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Cabang <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={branchId}
+                onChange={(e) => setBranchId(e.target.value)}
+                className="input-field"
+              >
+                <option value="">Pilih cabang...</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
-              <p className="text-xs font-semibold text-slate-500">Total Nett</p>
-              <p className="mt-1 text-xl font-extrabold text-rbn-red text-rupiah">{formatRupiah(previewTotals.grand)}</p>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Tahun</label>
+              <input
+                type="number"
+                min={2000}
+                max={2100}
+                value={year}
+                onChange={(e) => setYear(Number(e.target.value))}
+                className="input-field"
+              />
             </div>
-            <div className="rounded-lg border border-slate-200 bg-white p-3">
-              <p className="text-xs font-semibold text-slate-500">Baris Kosong</p>
-              <p className="mt-1 text-xl font-extrabold text-slate-950">{parseResult.skippedEmptyRows}</p>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Bulan Template</label>
+              <select
+                value={month}
+                onChange={(e) => setMonth(Number(e.target.value))}
+                className="input-field"
+              >
+                {monthOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Status Import</label>
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as 'draft' | 'submitted')}
+                className="input-field"
+              >
+                <option value="draft">Draft</option>
+                <option value="submitted">Submitted</option>
+              </select>
             </div>
           </div>
 
-          {parseResult.errors.length > 0 && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              {parseResult.errors.slice(0, 4).map((item) => (
-                <p key={item}>{item}</p>
-              ))}
+          {/* Template download */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <p className="text-sm font-semibold text-slate-700 mb-3">
+              <Download className="inline h-4 w-4 mr-1.5 text-slate-400" />
+              Download Template
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadXlsx}
+                className="btn-primary text-sm px-3 py-1.5"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                Template Excel (.xlsx)
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCsv}
+                className="btn-outline text-sm px-3 py-1.5"
+              >
+                <Download className="h-4 w-4" />
+                Template CSV (.csv)
+              </button>
+            </div>
+          </div>
+
+          {/* File upload area */}
+          <div>
+            <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+              Upload File Data
+            </label>
+            <label
+              className={[
+                'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-all',
+                !branchId
+                  ? 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed'
+                  : 'border-slate-300 bg-white hover:border-rbn-orange hover:bg-orange-50',
+              ].join(' ')}
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100">
+                <Upload className="h-6 w-6 text-slate-400" />
+              </div>
+              <div>
+                <p className="font-semibold text-slate-700">
+                  {fileName || 'Klik untuk pilih file'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Mendukung format .xlsx dan .csv
+                </p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv,text/csv"
+                onChange={handleFileChange}
+                disabled={!branchId}
+                className="sr-only"
+              />
+            </label>
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+              <span>{error}</span>
             </div>
           )}
 
-          {parseResult.warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              {parseResult.warnings.slice(0, 4).map((item) => (
-                <p key={item}>{item}</p>
-              ))}
+          {/* Tips */}
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
+            <p className="font-semibold mb-2 flex items-center gap-2">
+              <Info className="h-4 w-4" />
+              Petunjuk Pengisian
+            </p>
+            <ul className="space-y-1 text-xs list-disc list-inside text-blue-600">
+              <li>Pilih cabang terlebih dahulu, lalu download template sesuai bulan/tahun.</li>
+              <li>Isi data di template — kolom tanggal sudah terisi otomatis.</li>
+              <li>Masukkan angka murni tanpa format Rupiah (contoh: 150000).</li>
+              <li>Simpan file lalu upload di sini untuk ditinjau sebelum disimpan.</li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* ── STEP 2: REVIEW ── */}
+      {step === 'review' && parseResult && (
+        <div className="space-y-4 animate-fade-in">
+          <div className="card p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="page-kicker">Langkah 2</p>
+                <h3 className="text-lg font-extrabold text-slate-950">Review Data Import</h3>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  File: <span className="font-medium text-slate-700">{fileName}</span>
+                  {selectedBranch && (
+                    <> · Cabang: <span className="font-medium text-slate-700">{selectedBranch.name}</span></>
+                  )}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleBackToUpload}
+                className="btn-outline text-sm flex-shrink-0"
+              >
+                <X className="h-4 w-4" />
+                <span className="hidden sm:inline">Ganti File</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Summary stats */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="card p-4">
+              <p className="text-xs font-semibold text-slate-500">Total Baris</p>
+              <p className="mt-1 text-2xl font-extrabold text-slate-900">{parseResult.rows.length}</p>
+              {parseResult.skippedEmptyRows > 0 && (
+                <p className="text-xs text-slate-400 mt-0.5">+{parseResult.skippedEmptyRows} kosong dilewati</p>
+              )}
+            </div>
+            <div className={`card p-4 ${stats?.importableRows.length ? 'border-emerald-200' : ''}`}>
+              <p className="text-xs font-semibold text-slate-500">Siap Diimport</p>
+              {checkingDb ? (
+                <Loader2 className="mt-2 h-5 w-5 animate-spin text-slate-400" />
+              ) : (
+                <p className="mt-1 text-2xl font-extrabold text-emerald-600">
+                  {stats?.importableRows.length ?? '…'}
+                </p>
+              )}
+            </div>
+            <div className={`card p-4 ${(stats?.errorRows ?? 0) > 0 ? 'border-red-200 bg-red-50' : ''}`}>
+              <p className="text-xs font-semibold text-slate-500">Baris Error</p>
+              <p className={`mt-1 text-2xl font-extrabold ${(stats?.errorRows ?? 0) > 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                {stats?.errorRows ?? 0}
+              </p>
+            </div>
+            <div className="card p-4">
+              <p className="text-xs font-semibold text-slate-500">Total Grand Nett</p>
+              <p className="mt-1 text-lg font-extrabold text-rbn-red text-rupiah">
+                {checkingDb ? '…' : formatRupiah(stats?.grandTotal ?? 0)}
+              </p>
+            </div>
+          </div>
+
+          {/* Issue panels */}
+          {parseResult.fatalErrors.length > 0 && (
+            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+              <div>
+                {parseResult.fatalErrors.map((e, i) => <p key={i}>{e}</p>)}
+              </div>
             </div>
           )}
 
-          {parseResult.rows.length > 0 && (
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs font-bold uppercase tracking-wide text-slate-500">
+          {stats && (
+            <>
+              {stats.allErrors.length > 0 && (
+                <IssuePanel
+                  title="Error (harus diperbaiki)"
+                  issues={stats.allErrors}
+                  variant="error"
+                  defaultOpen
+                />
+              )}
+              {stats.allWarnings.length > 0 && (
+                <IssuePanel
+                  title="Peringatan (dapat diimport)"
+                  issues={stats.allWarnings}
+                  variant="warning"
+                  defaultOpen={false}
+                />
+              )}
+            </>
+          )}
+
+          {/* DB duplicates panel */}
+          {dbCheck && dbCheck.existingDates.length > 0 && (
+            <IssuePanel
+              title={`Duplikat Database (akan dilewati)`}
+              issues={dbCheck.existingDates.map((d) => ({
+                row: 0,
+                column: 'Tanggal',
+                message: `${d} — laporan sudah ada untuk cabang ${selectedBranch?.name}`,
+                severity: 'warning' as const,
+              }))}
+              variant="info"
+              defaultOpen={false}
+            />
+          )}
+
+          {/* Data Table */}
+          <div className="card overflow-hidden">
+            <div className="border-b border-slate-100 px-4 py-3 flex items-center justify-between">
+              <h4 className="font-bold text-sm text-slate-800">Detail Data ({parseResult.rows.length} baris)</h4>
+              <p className="text-xs text-slate-400">Scroll horizontal untuk melihat semua kolom</p>
+            </div>
+            <div className="overflow-x-auto scrollbar-thin">
+              <table className="w-full text-xs min-w-[900px]">
+                <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2">Tanggal</th>
-                    <th className="px-3 py-2 text-right">Offline</th>
-                    <th className="px-3 py-2 text-right">Online Nett</th>
-                    <th className="px-3 py-2 text-right">Grand Total</th>
+                    <th className="table-header sticky left-0 bg-slate-50 z-10 w-8">#</th>
+                    <th className="table-header w-10"></th>
+                    <th className="table-header">Tanggal</th>
+                    <th className="table-header text-right">Cash</th>
+                    <th className="table-header text-right">QRIS Gross</th>
+                    <th className="table-header text-right">GF Gross</th>
+                    <th className="table-header text-right">GF Nett</th>
+                    <th className="table-header text-right">GB Gross</th>
+                    <th className="table-header text-right">GB Nett</th>
+                    <th className="table-header text-right">SF Gross</th>
+                    <th className="table-header text-right">SF Nett</th>
+                    <th className="table-header text-right font-extrabold">Grand Total</th>
+                    <th className="table-header">Catatan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {parseResult.rows.slice(0, 6).map((row) => (
-                    <tr key={`${row.sourceRow}-${row.report_date}`}>
-                      <td className="px-3 py-2 font-semibold text-slate-800">{formatDate(row.report_date, 'dd MMM yyyy')}</td>
-                      <td className="px-3 py-2 text-right text-rupiah">{formatRupiah(row.total_offline)}</td>
-                      <td className="px-3 py-2 text-right text-rupiah">{formatRupiah(row.total_online_nett)}</td>
-                      <td className="px-3 py-2 text-right font-bold text-rbn-red text-rupiah">{formatRupiah(row.grand_total_nett_sales)}</td>
-                    </tr>
-                  ))}
+                  {parseResult.rows.map((row, idx) => {
+                    const hasRowErrors = row.rowErrors.some((e) => e.severity === 'error')
+                    const hasRowWarnings = row.rowErrors.some((e) => e.severity === 'warning')
+                    const isDbDup = dbCheck?.existingDates.includes(row.report_date) ?? false
+                    const isInternalDup = parseResult.internalDuplicateDates.includes(row.report_date)
+
+                    const rowBg = hasRowErrors || isInternalDup
+                      ? 'bg-red-50/70'
+                      : isDbDup
+                        ? 'bg-slate-50'
+                        : hasRowWarnings
+                          ? 'bg-amber-50/40'
+                          : ''
+
+                    return (
+                      <tr key={`${row.sourceRow}-${row.report_date}`} className={`${rowBg} hover:brightness-95 transition-all`}>
+                        <td className="table-cell sticky left-0 bg-inherit z-10 text-slate-400">{idx + 1}</td>
+                        <td className="table-cell">
+                          <div className="flex items-center gap-1">
+                            {row.rowErrors.length > 0 && (
+                              <RowIssueTooltip issues={row.rowErrors} />
+                            )}
+                            {isDbDup && (
+                              <span className="inline-block rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 whitespace-nowrap">
+                                DB
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className={`table-cell font-semibold ${(hasRowErrors || isInternalDup) ? 'text-red-700' : isDbDup ? 'text-slate-400 line-through' : ''}`}>
+                          {row.report_date || '—'}
+                        </td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.cash)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.qris_gross)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.gofood_gross)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.gofood_nett)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.grabfood_gross)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.grabfood_nett)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.shopeefood_gross)}</td>
+                        <td className="table-cell text-right text-rupiah">{formatRupiah(row.shopeefood_nett)}</td>
+                        <td className={`table-cell text-right font-bold text-rupiah ${isDbDup ? 'text-slate-400' : 'text-rbn-red'}`}>
+                          {formatRupiah(row.grand_total_nett_sales)}
+                        </td>
+                        <td className="table-cell text-slate-500 max-w-[120px] truncate">{row.notes || '—'}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          {/* Bottom actions */}
+          <div className="card p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="text-sm text-slate-600 flex items-center gap-2">
+              {checkingDb ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                  <span>Memeriksa duplikat di database...</span>
+                </>
+              ) : stats?.importableRows.length ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  <span>
+                    <span className="font-bold text-emerald-600">{stats.importableRows.length} baris</span> siap diimport
+                    {stats.dbDupCount > 0 && (
+                      <span className="text-slate-400"> · {stats.dbDupCount} duplikat dilewati</span>
+                    )}
+                    {stats.errorRows > 0 && (
+                      <span className="text-red-500"> · {stats.errorRows} baris error dilewati</span>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-4 w-4 text-red-500" />
+                  <span className="text-red-600 font-medium">Tidak ada data valid untuk diimport</span>
+                </>
+              )}
+            </div>
+
+            <div className="flex gap-3 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handleBackToUpload}
+                className="btn-outline flex-1 sm:flex-none text-sm"
+              >
+                ← Kembali
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowConfirm(true)}
+                disabled={
+                  checkingDb ||
+                  importing ||
+                  !stats?.importableRows.length
+                }
+                className="btn-primary flex-1 sm:flex-none text-sm"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                Import {stats?.importableRows.length ?? 0} Data
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
+              <span>{error}</span>
             </div>
           )}
         </div>
       )}
 
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={handleImport}
-          disabled={importing || !parseResult || parseResult.rows.length === 0 || parseResult.errors.length > 0}
-          className="btn-primary flex w-full items-center gap-2 text-sm sm:w-auto"
-        >
-          {importing ? (
-            <span className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
-          ) : (
-            <FileSpreadsheet className="h-4 w-4" />
-          )}
-          {importing ? 'Mengimport...' : 'Import CSV'}
-        </button>
-      </div>
-
-      {parseResult?.rows.length ? (
-        <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
-          <CheckCircle2 className="h-4 w-4" />
-          <span>CSV terbaca dan siap disimpan.</span>
+      {/* ── STEP 3: RESULT ── */}
+      {step === 'result' && importResult && (
+        <div className="card p-8 text-center space-y-5 animate-fade-in">
+          <div className="flex justify-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-lg shadow-emerald-200">
+              <CheckCircle2 className="h-8 w-8 text-white" />
+            </div>
+          </div>
+          <div>
+            <h3 className="text-xl font-extrabold text-slate-900">Import Berhasil!</h3>
+            <p className="text-slate-500 mt-1">{importResult.message}</p>
+          </div>
+          <div className="inline-flex flex-wrap justify-center gap-4 rounded-2xl bg-slate-50 px-6 py-4">
+            <div className="text-center">
+              <p className="text-2xl font-extrabold text-emerald-600">{importResult.successCount}</p>
+              <p className="text-xs text-slate-500 font-semibold mt-0.5">Berhasil Disimpan</p>
+            </div>
+            {importResult.skippedCount > 0 && (
+              <div className="text-center">
+                <p className="text-2xl font-extrabold text-slate-400">{importResult.skippedCount}</p>
+                <p className="text-xs text-slate-500 font-semibold mt-0.5">Dilewati</p>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row justify-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setStep('upload')
+                setParseResult(null)
+                setDbCheck(null)
+                setFileName('')
+                setImportResult(null)
+                setError(null)
+                if (fileInputRef.current) fileInputRef.current.value = ''
+              }}
+              className="btn-outline"
+            >
+              Import Lagi
+            </button>
+            <button
+              type="button"
+              onClick={() => onSuccess(importResult.message)}
+              className="btn-primary"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              Lihat Laporan
+            </button>
+          </div>
         </div>
-      ) : null}
+      )}
+
+      {/* Confirmation modal */}
+      {showConfirm && stats && selectedBranch && (
+        <ConfirmModal
+          validCount={stats.importableRows.length}
+          skippedDbCount={stats.dbDupCount}
+          branchName={selectedBranch.name}
+          status={status}
+          onConfirm={handleImport}
+          onCancel={() => setShowConfirm(false)}
+          loading={importing}
+        />
+      )}
     </div>
   )
 }

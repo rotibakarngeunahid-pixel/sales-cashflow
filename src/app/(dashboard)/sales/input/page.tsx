@@ -2,17 +2,16 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2, FileSpreadsheet } from 'lucide-react'
 import SalesForm from '@/components/sales/SalesForm'
-import SalesBulkImport from '@/components/sales/SalesBulkImport'
 
 const REPORTS_PATH = '/sales/reports'
+const IMPORT_PATH = '/sales/import'
 const SALES_REPORTS_TOAST_KEY = 'salesReportsToast'
 
 export default function SalesInputPage() {
   const router = useRouter()
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
-  const [showBulkImport, setShowBulkImport] = useState(false)
   const fallbackTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -65,8 +64,8 @@ export default function SalesInputPage() {
         </div>
       )}
 
-      {/* Info cards + Bulk Import toggle on same row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {/* Info cards + link to Import page */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <div className="flex items-center gap-2 text-emerald-700">
             <CalendarCheck className="h-4 w-4" />
@@ -81,24 +80,19 @@ export default function SalesInputPage() {
           </div>
           <p className="mt-1 text-sm font-semibold text-orange-950">Draft → Submit → Post (Final)</p>
         </div>
-      </div>
-
-      {/* Bulk Import — collapsed by default */}
-      <div>
         <button
           type="button"
-          onClick={() => setShowBulkImport(!showBulkImport)}
-          className="flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 px-3 py-2 rounded-lg transition-colors w-full sm:w-auto"
+          onClick={() => router.push(IMPORT_PATH)}
+          className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-left hover:bg-blue-100 hover:border-blue-300 transition-colors group"
         >
-          <FileSpreadsheet className="w-4 h-4" />
-          Import CSV Massal
-          {showBulkImport ? <ChevronUp className="w-3.5 h-3.5 ml-auto sm:ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto sm:ml-1" />}
-        </button>
-        {showBulkImport && (
-          <div className="mt-3">
-            <SalesBulkImport onSuccess={handleSuccess} />
+          <div className="flex items-center gap-2 text-blue-700">
+            <FileSpreadsheet className="h-4 w-4" />
+            <span className="text-xs font-bold uppercase tracking-wide">Import Massal</span>
           </div>
-        )}
+          <p className="mt-1 text-sm font-semibold text-blue-900 group-hover:underline">
+            Import dari Excel / CSV →
+          </p>
+        </button>
       </div>
 
       <div className="card p-4 sm:p-5">
