@@ -1,9 +1,10 @@
 export type UserRole = 'owner' | 'admin'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order'
 export type CashflowStatus = 'active' | 'void'
 export type CategoryDefaultType = 'cash_in' | 'cash_out' | 'both'
+export type RawMaterialImportStatus = 'success' | 'failed'
 
 export interface Profile {
   id: string
@@ -89,6 +90,9 @@ export interface CashflowTransaction {
   amount: number
   source: CashflowSource
   source_id: string | null
+  import_key: string | null
+  source_label: string | null
+  source_metadata: Record<string, unknown>
   status: CashflowStatus
   created_by: string | null
   updated_by: string | null
@@ -106,6 +110,20 @@ export interface AuditLog {
   changed_by: string | null
   changed_at: string
   changer?: Pick<Profile, 'full_name' | 'email'> | null
+}
+
+export interface RawMaterialImportLog {
+  id: string
+  imported_at: string
+  period_start: string
+  period_end: string
+  branch_count: number
+  total_amount: number
+  status: RawMaterialImportStatus
+  message: string | null
+  created_by: string | null
+  created_at: string
+  actor?: Pick<Profile, 'full_name' | 'email'> | null
 }
 
 export interface Database {
@@ -324,6 +342,9 @@ export interface Database {
           amount: number
           source: CashflowSource
           source_id: string | null
+          import_key: string | null
+          source_label: string | null
+          source_metadata: Record<string, unknown>
           status: CashflowStatus
           created_by: string | null
           updated_by: string | null
@@ -341,6 +362,9 @@ export interface Database {
           cash_out?: number
           source?: CashflowSource
           source_id?: string | null
+          import_key?: string | null
+          source_label?: string | null
+          source_metadata?: Record<string, unknown>
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -356,6 +380,9 @@ export interface Database {
           amount?: number
           source?: CashflowSource
           source_id?: string | null
+          import_key?: string | null
+          source_label?: string | null
+          source_metadata?: Record<string, unknown>
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -385,6 +412,41 @@ export interface Database {
           {
             foreignKeyName: 'cashflow_transactions_updated_by_fkey'
             columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      raw_material_import_logs: {
+        Row: {
+          id: string
+          imported_at: string
+          period_start: string
+          period_end: string
+          branch_count: number
+          total_amount: number
+          status: RawMaterialImportStatus
+          message: string | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          imported_at?: string
+          period_start: string
+          period_end: string
+          branch_count?: number
+          total_amount?: number
+          status: RawMaterialImportStatus
+          message?: string | null
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: never
+        Relationships: [
+          {
+            foreignKeyName: 'raw_material_import_logs_created_by_fkey'
+            columns: ['created_by']
             isOneToOne: false
             referencedRelation: 'profiles'
             referencedColumns: ['id']

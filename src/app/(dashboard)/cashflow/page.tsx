@@ -63,6 +63,26 @@ function getNominalLabel(tx: CashflowTransaction) {
   return `${prefix}${formatRupiah(getNominalAmount(tx))}`
 }
 
+function CashflowSourceLabel({ tx }: { tx: CashflowTransaction }) {
+  if (tx.source === 'sales') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Auto Sales
+      </span>
+    )
+  }
+
+  if (tx.source === 'purchase_order') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Auto Bahan Baku
+      </span>
+    )
+  }
+
+  return <span className="text-xs text-gray-500">Manual</span>
+}
+
 export default function CashflowPage() {
   const [transactions, setTransactions] = useState<CashflowTransaction[]>([])
   const [cashPositions, setCashPositions] = useState<CashPosition[]>([])
@@ -612,13 +632,7 @@ export default function CashflowPage() {
                       <div className="truncate">{getNominalLabel(tx)}</div>
                     </td>
                     <td className="table-cell">
-                      {tx.source === 'sales' ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                          <Info className="w-3 h-3" /> Auto
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-500">Manual</span>
-                      )}
+                      <CashflowSourceLabel tx={tx} />
                     </td>
                     <td className="table-cell"><CashflowStatusBadge status={tx.status} /></td>
                     <td className="table-cell">
@@ -647,6 +661,9 @@ export default function CashflowPage() {
                         )}
                         {tx.source === 'sales' && (
                           <span className="text-xs text-gray-400 px-2">{tx.status === 'void' ? 'Hapus lewat Sales' : 'Dari Sales'}</span>
+                        )}
+                        {tx.source === 'purchase_order' && (
+                          <span className="text-xs text-gray-400 px-2">Dari Import</span>
                         )}
                       </div>
                     </td>
@@ -680,13 +697,7 @@ export default function CashflowPage() {
                 </div>
 
                 <div className="mt-3 flex items-center justify-between gap-3">
-                  {tx.source === 'sales' ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-1 text-xs text-blue-600">
-                      <Info className="w-3 h-3" /> {tx.status === 'void' ? 'Hapus lewat Sales' : 'Auto Sales'}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-slate-500">Manual</span>
-                  )}
+                  <CashflowSourceLabel tx={tx} />
 
                   <div className="flex flex-wrap justify-end gap-2">
                     {tx.source === 'manual' && tx.status === 'active' && (
