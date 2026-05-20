@@ -16,7 +16,7 @@ import { createClient } from '@/lib/supabase/client'
 import { formatRupiah } from '@/lib/utils/format'
 import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 import { ConfirmModal } from '@/components/ui/Modal'
-import type { Branch, CashflowCategory, Database } from '@/types/database'
+import type { Branch, CashflowCategory, CashflowType, CategoryDefaultType, Database } from '@/types/database'
 import {
   buildCashflowTemplateCsv,
   buildCashflowTemplateXlsx,
@@ -44,6 +44,15 @@ interface ImportResult {
 
 const SOURCE_LABEL = 'Cashflow Excel/CSV Import'
 
+function normalizeName(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '')
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -53,6 +62,91 @@ function downloadBlob(blob: Blob, filename: string) {
   link.click()
   link.remove()
   URL.revokeObjectURL(url)
+}
+
+function getDefaultType(types: Set<CashflowType>): CategoryDefaultType {
+  if (types.size > 1) return 'both'
+  return types.has('cash_in') ? 'cash_in' : 'cash_out'
+}
+
+async function ensureImportCategories(
+  supabase: ReturnType<typeof createClient>,
+  rows: ParsedCashflowImportRow[],
+  userId: string | null
+) {
+  const missingByKey = new Map<string, { name: string; types: Set<CashflowType> }>()
+
+  rows.forEach((row) => {
+    if (row.category_id || !row.category_name.trim()) return
+
+    const key = normalizeName(row.category_name)
+    const existing = missingByKey.get(key)
+    if (existing) {
+      existing.types.add(row.transaction_type)
+      return
+    }
+
+    missingByKey.set(key, {
+      name: row.category_name.trim(),
+      types: new Set([row.transaction_type]),
+    })
+  })
+
+  if (missingByKey.size === 0) return rows
+
+  const { data: existingCategories, error: loadError } = await supabase
+    .from('cashflow_categories')
+    .select('id,name,default_type')
+    .is('deleted_at', null)
+
+  if (loadError) throw loadError
+
+  const categoryByKey = new Map(
+    (existingCategories || []).map((category) => [normalizeName(category.name), category])
+  )
+  const categoriesToCreate = Array.from(missingByKey.entries())
+    .filter(([key]) => !categoryByKey.has(key))
+    .map(([, item]) => ({
+      name: item.name,
+      default_type: getDefaultType(item.types),
+      description: 'Dibuat otomatis dari import cashflow',
+      is_active: true,
+    }))
+
+  if (categoriesToCreate.length > 0) {
+    const { data: insertedCategories, error: insertError } = await supabase
+      .from('cashflow_categories')
+      .insert(categoriesToCreate)
+      .select('id,name,default_type')
+
+    if (insertError) throw insertError
+
+    ;(insertedCategories || []).forEach((category) => {
+      categoryByKey.set(normalizeName(category.name), category)
+    })
+
+    if (insertedCategories && insertedCategories.length > 0) {
+      await supabase.from('audit_logs').insert(
+        insertedCategories.map((category) => ({
+          table_name: 'cashflow_categories',
+          record_id: category.id,
+          action: 'category_created',
+          old_data: null,
+          new_data: category as unknown as Record<string, unknown>,
+          changed_by: userId,
+          changed_at: new Date().toISOString(),
+        }))
+      )
+    }
+  }
+
+  invalidateCachedData(/^(cashflow-categories:|cashflow:|cash-positions:|cashflow-analysis:|dashboard:)/)
+
+  return rows.map((row) => {
+    if (row.category_id) return row
+    const category = categoryByKey.get(normalizeName(row.category_name))
+    return category ? { ...row, category_id: category.id } : row
+  })
 }
 
 function toInsertPayload(row: ParsedCashflowImportRow, userId: string | null, fileName: string): CashflowInsert {
@@ -317,7 +411,11 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
       }
 
       if (result.rows.length === 0) {
-        setError('Tidak ada data cashflow yang dapat dibaca dari file.')
+        setError(
+          result.skippedEmptyRows > 0
+            ? 'Tidak ada data bernominal lebih dari 0 untuk diimport.'
+            : 'Tidak ada data cashflow yang dapat dibaca dari file.'
+        )
         return
       }
 
@@ -347,7 +445,13 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
       const userId = session?.user?.id ?? null
-      const payload = stats.importableRows.map((row) => toInsertPayload(row, userId, fileName))
+      const resolvedRows = await ensureImportCategories(supabase, stats.importableRows, userId)
+      const unresolvedCategory = resolvedRows.find((row) => !row.category_id)
+      if (unresolvedCategory) {
+        throw new Error(`Kategori "${unresolvedCategory.category_name}" gagal dibuat otomatis.`)
+      }
+
+      const payload = resolvedRows.map((row) => toInsertPayload(row, userId, fileName))
 
       const { data: inserted, error: insertError } = await supabase
         .from('cashflow_transactions')
@@ -502,6 +606,11 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
             <div className="card p-4">
               <p className="text-xs font-semibold text-slate-500">Total Baris</p>
               <p className="mt-1 text-2xl font-extrabold text-slate-900">{parseResult.rows.length}</p>
+              {parseResult.skippedEmptyRows > 0 && (
+                <p className="mt-0.5 text-xs text-slate-400">
+                  +{parseResult.skippedEmptyRows} kosong/0 dilewati
+                </p>
+              )}
             </div>
             <div className="card p-4">
               <p className="text-xs font-semibold text-slate-500">Siap Diimport</p>

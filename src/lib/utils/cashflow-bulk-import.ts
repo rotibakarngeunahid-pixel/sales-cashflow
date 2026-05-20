@@ -122,16 +122,17 @@ function parseDateValue(value: RawCell): string | null {
   return null
 }
 
-function parseAmount(value: RawCell): { value: number; error: string | null } {
+function parseAmount(value: RawCell): { value: number; error: string | null; isZero: boolean } {
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return { value: 0, error: 'Nominal tidak valid.' }
-    if (value <= 0) return { value, error: 'Nominal harus lebih dari 0.' }
-    return { value: Math.round(value), error: null }
+    if (!Number.isFinite(value)) return { value: 0, error: 'Nominal tidak valid.', isZero: false }
+    if (value === 0) return { value: 0, error: null, isZero: true }
+    if (value < 0) return { value, error: 'Nominal tidak boleh negatif.', isZero: false }
+    return { value: Math.round(value), error: null, isZero: false }
   }
 
   const raw = String(value ?? '').trim()
-  if (!raw) return { value: 0, error: 'Nominal wajib diisi.' }
-  if (!/[0-9]/.test(raw)) return { value: 0, error: `Nominal tidak valid: "${raw}".` }
+  if (!raw) return { value: 0, error: 'Nominal wajib diisi.', isZero: false }
+  if (!/[0-9]/.test(raw)) return { value: 0, error: `Nominal tidak valid: "${raw}".`, isZero: false }
 
   const isNegative = raw.includes('-') || /^\(.*\)$/.test(raw)
   const cleaned = raw.replace(/[^0-9,.-]/g, '')
@@ -152,12 +153,16 @@ function parseAmount(value: RawCell): { value: number; error: string | null } {
   }
 
   const parsed = Number(normalized)
-  if (!Number.isFinite(parsed)) return { value: 0, error: `Nominal tidak valid: "${raw}".` }
+  if (!Number.isFinite(parsed)) return { value: 0, error: `Nominal tidak valid: "${raw}".`, isZero: false }
   const amount = Math.round(Math.abs(parsed))
-  if (isNegative || parsed < 0) return { value: -amount, error: 'Nominal tidak boleh negatif.' }
-  if (amount <= 0) return { value: amount, error: 'Nominal harus lebih dari 0.' }
+  if (isNegative || parsed < 0) return { value: -amount, error: 'Nominal tidak boleh negatif.', isZero: false }
+  if (amount === 0) return { value: 0, error: null, isZero: true }
 
-  return { value: amount, error: null }
+  return { value: amount, error: null, isZero: false }
+}
+
+function hasZeroAmount(row: RawCell[]) {
+  return parseAmount(row[5]).isZero
 }
 
 function parseTransactionType(value: RawCell): CashflowType | null {
@@ -175,7 +180,7 @@ function makeImportKey(row: {
   transaction_date: string
   branch_id: string
   transaction_type: CashflowType
-  category_id: string
+  category_key: string
   amount: number
   description: string
   reference_code: string
@@ -189,7 +194,7 @@ function makeImportKey(row: {
     row.transaction_date,
     row.branch_id,
     row.transaction_type,
-    row.category_id,
+    row.category_key,
     row.amount,
     normalizeText(row.description || '-'),
   ].join(':')
@@ -251,12 +256,19 @@ function parseRowData(
 
   const rawCategory = String(rawCells[3] ?? '').trim()
   const category = categoryByName.get(normalizeText(rawCategory))
-  if (!category) {
+  if (!rawCategory) {
     issues.push({
       row: sourceRow,
       column: 'Kategori',
-      message: rawCategory ? `Kategori "${rawCategory}" tidak ditemukan.` : 'Kategori wajib diisi.',
+      message: 'Kategori wajib diisi.',
       severity: 'error',
+    })
+  } else if (!category) {
+    issues.push({
+      row: sourceRow,
+      column: 'Kategori',
+      message: `Kategori "${rawCategory}" belum ada dan akan dibuat otomatis saat import.`,
+      severity: 'warning',
     })
   } else if (
     transactionType
@@ -304,11 +316,21 @@ function parseRowData(
         transaction_date: transactionDate,
         branch_id: branch.id,
         transaction_type: transactionType,
-        category_id: category.id,
+        category_key: normalizeText(category.name),
         amount: amountResult.value,
         description,
         reference_code: referenceCode,
       })
+      : transactionDate && branch && transactionType && rawCategory && amountResult.value > 0
+        ? makeImportKey({
+          transaction_date: transactionDate,
+          branch_id: branch.id,
+          transaction_type: transactionType,
+          category_key: normalizeText(rawCategory),
+          amount: amountResult.value,
+          description,
+          reference_code: referenceCode,
+        })
       : '',
   }
 }
@@ -333,6 +355,10 @@ function parseRawRows(rawRows: RawCell[][], context: LookupContext, kind: 'CSV' 
   filledRows.slice(1).forEach((rawRow, index) => {
     const sourceRow = index + 2
     if (isEmptyDataRow(rawRow)) {
+      skippedEmptyRows += 1
+      return
+    }
+    if (hasZeroAmount(rawRow)) {
       skippedEmptyRows += 1
       return
     }
@@ -557,10 +583,11 @@ export function buildCashflowTemplateXlsx(branches: BranchLookup[], categories: 
     ['1. Isi data hanya pada sheet Template.'],
     ['2. Kolom Tanggal menerima format YYYY-MM-DD atau DD/MM/YYYY.'],
     ['3. Kolom Tipe menerima Cash In, Cash Out, Masuk, Keluar, cash_in, atau cash_out.'],
-    ['4. Cabang dan Kategori harus sama dengan daftar pada sheet referensi.'],
-    ['5. Nominal harus angka positif tanpa tanda minus.'],
-    ['6. Kode Referensi opsional, tetapi disarankan jika data punya nomor bukti/nota.'],
-    ['7. Data akan masuk sebagai transaksi cashflow manual hasil import file, bukan laporan sales.'],
+    ['4. Cabang harus sama dengan daftar pada sheet referensi.'],
+    ['5. Kategori yang belum tersedia akan dibuat otomatis sesuai tipe transaksi.'],
+    ['6. Nominal harus angka positif tanpa tanda minus; nominal 0 akan dilewati.'],
+    ['7. Kode Referensi opsional, tetapi disarankan jika data punya nomor bukti/nota.'],
+    ['8. Data akan masuk sebagai transaksi cashflow manual hasil import file, bukan laporan sales.'],
   ])
   instructionSheet['!cols'] = [{ wch: 90 }]
   XLSX.utils.book_append_sheet(workbook, instructionSheet, 'Petunjuk')
