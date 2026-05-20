@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X, Upload } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
@@ -30,6 +31,8 @@ type CashPositionRow = {
   cash_out: number | null
   branch?: Pick<Branch, 'id' | 'name'> | null
 }
+
+const CASHFLOW_TOAST_KEY = 'cashflowToast'
 
 function Toast({ message, type, onClose }: { message: string; type: 'success' | 'error'; onClose: () => void }) {
   return (
@@ -80,6 +83,14 @@ function CashflowSourceLabel({ tx }: { tx: CashflowTransaction }) {
     )
   }
 
+  if (tx.source_label) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Import File
+      </span>
+    )
+  }
+
   return <span className="text-xs text-gray-500">Manual</span>
 }
 
@@ -98,6 +109,19 @@ export default function CashflowPage() {
     setToast({ message: msg, type })
     setTimeout(() => setToast(null), 4000)
   }, [])
+
+  useEffect(() => {
+    let message: string | null = null
+
+    try {
+      message = window.sessionStorage.getItem(CASHFLOW_TOAST_KEY)
+      if (message) window.sessionStorage.removeItem(CASHFLOW_TOAST_KEY)
+    } catch {
+      message = null
+    }
+
+    if (message) toastTimerRef(message, 'success')
+  }, [toastTimerRef])
 
   async function handleExport() {
     const { exportCashflowToExcel } = await import('@/lib/utils/export')
@@ -491,6 +515,14 @@ export default function CashflowPage() {
           <p className="text-sm text-gray-500">{transactions.length} transaksi</p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <Link
+            href="/cashflow/import"
+            prefetch
+            className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
+          >
+            <Upload className="w-4 h-4" />
+            <span>Import</span>
+          </Link>
           <button
             onClick={handleExport}
             className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto"
