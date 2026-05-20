@@ -44,6 +44,8 @@ export interface SalesReport {
   branch?: Pick<Branch, 'id' | 'name'> | null
   cash: number
   qris: number
+  qris_gross: number
+  qris_mdr: number
   gofood_gross: number
   gofood_promo: number
   gofood_commission: number
@@ -195,6 +197,8 @@ export interface Database {
           branch_id: string
           cash: number
           qris: number
+          qris_gross: number
+          qris_mdr: number
           gofood_gross: number
           gofood_promo: number
           gofood_commission: number
@@ -226,6 +230,8 @@ export interface Database {
           branch_id: string
           cash?: number
           qris?: number
+          qris_gross?: number
+          qris_mdr?: number
           gofood_gross?: number
           gofood_promo?: number
           gofood_commission?: number
@@ -255,6 +261,8 @@ export interface Database {
           branch_id?: string
           cash?: number
           qris?: number
+          qris_gross?: number
+          qris_mdr?: number
           gofood_gross?: number
           gofood_promo?: number
           gofood_commission?: number

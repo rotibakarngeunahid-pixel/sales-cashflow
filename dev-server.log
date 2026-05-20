@@ -1,0 +1,65 @@
+
+> rbn-sales-cashflow@0.1.0 dev
+> next dev --hostname 127.0.0.1 --port 3000
+
+  ▲ Next.js 14.2.18
+  - Local:        http://127.0.0.1:3000
+  - Network:      http://127.0.0.1:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 10.6s
+ ○ Compiling / ...
+ ✓ Compiled / in 14.7s (518 modules)
+ ✓ Compiled in 654ms (233 modules)
+ GET / 307 in 87ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 3.8s (683 modules)
+ GET /login 200 in 3980ms
+ GET / 307 in 461ms
+ GET /login 200 in 99ms
+ ✓ Compiled in 6.4s (309 modules)
+ ✓ Compiled in 981ms (323 modules)
+ ✓ Compiled in 378ms (323 modules)
+ ✓ Compiled in 874ms (323 modules)
+ ✓ Compiled in 840ms (323 modules)
+ ✓ Compiled in 1246ms (323 modules)
+ ✓ Compiled in 604ms (323 modules)
+ ✓ Compiled in 356ms (323 modules)
+ ✓ Compiled in 437ms (323 modules)
+ ✓ Compiled in 545ms (323 modules)
+ ✓ Compiled in 467ms (323 modules)
+ ✓ Compiled in 369ms (323 modules)
+ ✓ Compiled in 491ms (323 modules)
+ ✓ Compiled in 432ms (323 modules)
+ ✓ Compiled in 375ms (323 modules)
+ ✓ Compiled in 370ms (323 modules)
+ ✓ Compiled in 415ms (323 modules)
+ ✓ Compiled in 324ms (323 modules)
+ ✓ Compiled in 386ms (323 modules)
+ ✓ Compiled in 429ms (323 modules)
+ ✓ Compiled in 421ms (323 modules)
+ ✓ Compiled in 6.1s (323 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 916ms (305 modules)
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 3.7s (840 modules)
+ GET /login 500 in 5378ms
+ GET /login 500 in 5422ms
+ ✓ Compiled in 2.8s (507 modules)
+ ✓ Compiled in 1279ms (507 modules)
+ ✓ Compiled in 665ms (507 modules)
+ ✓ Compiled in 4.5s (507 modules)
+ ✓ Compiled in 6.4s (507 modules)
+ ✓ Compiled in 10.9s (555 modules)
+ ✓ Compiled in 5.8s (507 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 7.2s (345 modules)
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 8.6s (854 modules)
+ GET /login 500 in 25125ms
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 58.4s (3145 modules)
+ GET /dashboard 200 in 64124ms
+ ○ Compiling /sales/input ...
+ ✓ Compiled /sales/input in 47.3s (3185 modules)

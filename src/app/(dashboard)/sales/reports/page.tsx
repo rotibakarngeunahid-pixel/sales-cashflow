@@ -588,7 +588,9 @@ export default function SalesReportsPage() {
             <div className="grid grid-cols-2 gap-2">
               {[
                 ['Cash', detailReport.cash],
-                ['QRIS', detailReport.qris],
+                ['QRIS Gross', detailReport.qris_gross ?? detailReport.qris],
+                ['QRIS MDR (biaya)', detailReport.qris_mdr ?? 0],
+                ['QRIS Cair (Nett)', detailReport.qris],
                 ['GoFood Gross', detailReport.gofood_gross],
                 ['GoFood Promo', detailReport.gofood_promo],
                 ['GoFood Komisi', detailReport.gofood_commission],

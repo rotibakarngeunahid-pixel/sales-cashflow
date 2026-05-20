@@ -1,0 +1,46 @@
+
+> rbn-sales-cashflow@0.1.0 dev
+> next dev --hostname 127.0.0.1 --port 3001
+
+  ▲ Next.js 14.2.18
+  - Local:        http://127.0.0.1:3001
+  - Network:      http://127.0.0.1:3001
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 18s
+ ○ Compiling /login ...
+ ✓ Compiled /login in 18.5s (628 modules)
+ GET /login 200 in 20947ms
+ GET /login 200 in 21024ms
+ ✓ Compiled in 2.7s (323 modules)
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 18s (2919 modules)
+ GET /dashboard 200 in 19818ms
+ ✓ Compiled in 5.6s (1474 modules)
+ ✓ Compiled in 917ms (1474 modules)
+ ✓ Compiled in 813ms (1474 modules)
+ ○ Compiling /sales/input ...
+ ✓ Compiled /sales/input in 24.1s (2463 modules)
+ GET /sales/reports 200 in 27012ms
+ GET /sales/input 200 in 26908ms
+ ✓ Compiled in 18s (1522 modules)
+ ✓ Compiled in 11.6s (1522 modules)
+ ✓ Compiled in 16.7s (1522 modules)
+ ✓ Compiled in 17.5s (1522 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 8.2s (305 modules)
+ ○ Compiling /_error ...
+ ✓ Compiled /_error in 18.9s (2053 modules)
+ GET /login 500 in 32771ms
+ ○ Compiling /dashboard ...
+ ✓ Compiled /dashboard in 25.7s (1500 modules)
+ GET /dashboard 200 in 32589ms
+ ○ Compiling /sales/input ...
+ ✓ Compiled /sales/input in 5.4s (1528 modules)
+ GET /sales/input 200 in 7401ms
+ ○ Compiling /sales/reports ...
+ ✓ Compiled /sales/reports in 24.7s (1550 modules)
+ GET /sales/reports 200 in 29646ms
+ ○ Compiling /cashflow ...
+ ✓ Compiled /cashflow in 36.9s (3242 modules)

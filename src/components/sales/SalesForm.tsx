@@ -8,8 +8,11 @@ import { calculateSales } from '@/lib/utils/calculations'
 import { formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import type { Branch, SalesReport } from '@/types/database'
 import { createClient } from '@/lib/supabase/client'
-import { ChevronDown, ChevronUp, Info, CheckCircle2, Send } from 'lucide-react'
+import { ChevronDown, ChevronUp, Info, CheckCircle2, Send, Banknote, QrCode, TrendingDown } from 'lucide-react'
 import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
+
+// Bank Indonesia standard QRIS MDR rate for regular merchants
+const QRIS_MDR_RATE = 0.007
 
 interface SalesFormProps {
   initialData?: SalesReport | null
@@ -24,9 +27,10 @@ interface NumericInputProps {
   error?: string
   hint?: string
   readOnly?: boolean
+  placeholder?: string
 }
 
-function NumericInput({ label, name, register, error, hint, readOnly }: NumericInputProps) {
+function NumericInput({ label, name, register, error, hint, readOnly, placeholder }: NumericInputProps) {
   return (
     <div>
       <label className="block text-xs font-bold text-slate-600 mb-1">{label}</label>
@@ -37,7 +41,7 @@ function NumericInput({ label, name, register, error, hint, readOnly }: NumericI
         readOnly={readOnly}
         {...register(name)}
         className={`input-field text-sm font-semibold text-rupiah ${readOnly ? 'bg-slate-50 text-slate-500' : ''}`}
-        placeholder="0"
+        placeholder={placeholder ?? '0'}
       />
       {hint && <p className="text-xs text-slate-400 mt-0.5">{hint}</p>}
       {error && <p className="text-xs text-red-500 mt-0.5">{error}</p>}
@@ -50,11 +54,13 @@ function SectionHeader({
   expanded,
   onToggle,
   badge,
+  icon,
 }: {
   title: string
   expanded: boolean
   onToggle: () => void
   badge?: string
+  icon?: React.ReactNode
 }) {
   return (
     <button
@@ -63,6 +69,7 @@ function SectionHeader({
       className="w-full flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg hover:bg-white hover:border-slate-300 transition-colors"
     >
       <div className="flex items-center gap-2">
+        {icon}
         <span className="text-sm font-bold text-slate-800">{title}</span>
         {badge && (
           <span className="text-xs bg-rbn-orange/10 text-rbn-orange px-2 py-0.5 rounded-full font-bold text-rupiah">
@@ -79,12 +86,11 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   const [branches, setBranches] = useState<Branch[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showGofood, setShowGofood] = useState(true)
-  const [showGrabfood, setShowGrabfood] = useState(true)
-  const [showShopeefood, setShowShopeefood] = useState(true)
+  const [showGofood, setShowGofood] = useState(false)
+  const [showGrabfood, setShowGrabfood] = useState(false)
+  const [showShopeefood, setShowShopeefood] = useState(false)
   const [calcs, setCalcs] = useState<ReturnType<typeof calculateSales> | null>(null)
 
-  // Tracks which button the user clicked: 'draft' or 'submitted'
   const submitIntentRef = useRef<'draft' | 'submitted'>('draft')
 
   const {
@@ -98,7 +104,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       report_date: initialData?.report_date || toDateInputValue(),
       branch_id: initialData?.branch_id || '',
       cash: initialData?.cash || 0,
-      qris: initialData?.qris || 0,
+      qris_gross: initialData?.qris_gross || initialData?.qris || 0,
       gofood_gross: initialData?.gofood_gross || 0,
       gofood_promo: initialData?.gofood_promo || 0,
       gofood_commission: initialData?.gofood_commission || 0,
@@ -118,10 +124,24 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
 
   const watchedValues = watch()
 
+  // Auto-expand sections that have data (when editing)
+  useEffect(() => {
+    if (initialData) {
+      if ((initialData.gofood_gross || 0) > 0 || (initialData.gofood_nett || 0) > 0) setShowGofood(true)
+      if ((initialData.grabfood_gross || 0) > 0 || (initialData.grabfood_nett || 0) > 0) setShowGrabfood(true)
+      if ((initialData.shopeefood_gross || 0) > 0 || (initialData.shopeefood_nett || 0) > 0) setShowShopeefood(true)
+    }
+  }, [initialData])
+
+  // Derive QRIS MDR values in real-time
+  const qrisGross = Number(watchedValues.qris_gross) || 0
+  const qrisMdr = Math.round(qrisGross * QRIS_MDR_RATE)
+  const qrisNett = qrisGross - qrisMdr
+
   useEffect(() => {
     const result = calculateSales({
       cash: Number(watchedValues.cash) || 0,
-      qris: Number(watchedValues.qris) || 0,
+      qris: qrisNett,
       gofood_gross: Number(watchedValues.gofood_gross) || 0,
       gofood_promo: Number(watchedValues.gofood_promo) || 0,
       gofood_commission: Number(watchedValues.gofood_commission) || 0,
@@ -137,7 +157,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       shopeefood_nett: Number(watchedValues.shopeefood_nett) || 0,
     })
     setCalcs(result)
-  }, [watchedValues])
+  }, [watchedValues, qrisNett])
 
   useEffect(() => {
     async function loadBranches() {
@@ -151,7 +171,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
             .eq('is_active', true)
             .is('deleted_at', null)
             .order('name')
-
           return data || []
         },
         { ttlMs: 5 * 60_000 }
@@ -168,9 +187,13 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     const { data: { session } } = await supabase.auth.getSession()
     const user = session?.user
 
+    const gross = Number(data.qris_gross) || 0
+    const mdr = Math.round(gross * QRIS_MDR_RATE)
+    const nett = gross - mdr
+
     const computed = calculateSales({
       cash: Number(data.cash),
-      qris: Number(data.qris),
+      qris: nett,
       gofood_gross: Number(data.gofood_gross),
       gofood_promo: Number(data.gofood_promo),
       gofood_commission: Number(data.gofood_commission),
@@ -189,7 +212,9 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     const payload = {
       ...data,
       cash: Number(data.cash),
-      qris: Number(data.qris),
+      qris: nett,
+      qris_gross: gross,
+      qris_mdr: mdr,
       gofood_gross: Number(data.gofood_gross),
       gofood_promo: Number(data.gofood_promo),
       gofood_commission: Number(data.gofood_commission),
@@ -208,7 +233,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     }
 
     if (initialData) {
-      // When editing: keep the current status unless it's a draft/submitted being submitted
       let newStatus = initialData.status
       if (initialData.status === 'draft' && submitIntentRef.current === 'submitted') {
         newStatus = 'submitted'
@@ -283,7 +307,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     }
   }
 
-  // Determines which button labels to show based on existing data status
   const isEditingPosted = initialData?.status === 'posted'
   const isEditingVoid = initialData?.status === 'void'
   const isEditingSubmitted = initialData?.status === 'submitted'
@@ -336,13 +359,70 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           Penjualan Offline
         </h3>
         <div className="grid grid-cols-2 gap-3">
-          <NumericInput label="Cash" name="cash" register={register} error={errors.cash?.message} />
-          <NumericInput label="QRIS" name="qris" register={register} error={errors.qris?.message} />
+          {/* Cash card */}
+          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+            <div className="flex items-center gap-1.5">
+              <Banknote className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">Cash</span>
+            </div>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              {...register('cash')}
+              className="input-field text-sm font-semibold text-rupiah"
+              placeholder="0"
+            />
+            {errors.cash && <p className="text-xs text-red-500">{errors.cash.message}</p>}
+          </div>
+
+          {/* QRIS card with MDR breakdown */}
+          <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <QrCode className="w-3.5 h-3.5 text-blue-500" />
+                <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">QRIS</span>
+              </div>
+              <span className="text-xs text-slate-400 font-medium">MDR {(QRIS_MDR_RATE * 100).toFixed(1)}%</span>
+            </div>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              {...register('qris_gross')}
+              className="input-field text-sm font-semibold text-rupiah"
+              placeholder="Nominal QRIS..."
+            />
+            {errors.qris_gross && <p className="text-xs text-red-500">{errors.qris_gross.message}</p>}
+            {qrisGross > 0 && (
+              <div className="grid grid-cols-2 gap-1 pt-2 border-t border-slate-100">
+                <div>
+                  <p className="text-xs text-slate-400">Biaya MDR</p>
+                  <p className="text-xs font-bold text-red-500">-{formatRupiah(qrisMdr)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Cair</p>
+                  <p className="text-xs font-bold text-emerald-600">{formatRupiah(qrisNett)}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Offline total summary */}
         {calcs && (
-          <p className="text-xs text-slate-500 mt-2">
-            Total Offline: <span className="font-bold text-slate-800 text-rupiah">{formatRupiah(calcs.total_offline)}</span>
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+            <span>
+              Total Offline:{' '}
+              <span className="font-bold text-slate-800 text-rupiah">{formatRupiah(calcs.total_offline)}</span>
+            </span>
+            {qrisMdr > 0 && (
+              <span className="flex items-center gap-1 text-red-400">
+                <TrendingDown className="w-3 h-3" />
+                MDR QRIS: -{formatRupiah(qrisMdr)}
+              </span>
+            )}
+          </div>
         )}
       </div>
 
@@ -352,7 +432,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           title="GoFood"
           expanded={showGofood}
           onToggle={() => setShowGofood(!showGofood)}
-          badge={calcs && Number(watchedValues.gofood_nett) > 0 ? formatRupiah(Number(watchedValues.gofood_nett) || 0) : undefined}
+          badge={Number(watchedValues.gofood_nett) > 0 ? formatRupiah(Number(watchedValues.gofood_nett)) : undefined}
         />
         {showGofood && (
           <div className="grid grid-cols-2 gap-3 mt-3">
@@ -370,7 +450,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           title="GrabFood"
           expanded={showGrabfood}
           onToggle={() => setShowGrabfood(!showGrabfood)}
-          badge={calcs && Number(watchedValues.grabfood_nett) > 0 ? formatRupiah(Number(watchedValues.grabfood_nett) || 0) : undefined}
+          badge={Number(watchedValues.grabfood_nett) > 0 ? formatRupiah(Number(watchedValues.grabfood_nett)) : undefined}
         />
         {showGrabfood && (
           <div className="grid grid-cols-2 gap-3 mt-3">
@@ -389,7 +469,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           title="ShopeeFood"
           expanded={showShopeefood}
           onToggle={() => setShowShopeefood(!showShopeefood)}
-          badge={calcs && Number(watchedValues.shopeefood_nett) > 0 ? formatRupiah(Number(watchedValues.shopeefood_nett) || 0) : undefined}
+          badge={Number(watchedValues.shopeefood_nett) > 0 ? formatRupiah(Number(watchedValues.shopeefood_nett)) : undefined}
         />
         {showShopeefood && (
           <div className="grid grid-cols-2 gap-3 mt-3">
@@ -412,6 +492,11 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
             <div>
               <p className="text-slate-500 text-xs">Total Offline</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_offline)}</p>
+              {qrisMdr > 0 && (
+                <p className="text-xs text-red-400 mt-0.5">
+                  incl. MDR QRIS -{formatRupiah(qrisMdr)}
+                </p>
+              )}
             </div>
             <div>
               <p className="text-slate-500 text-xs">Total Online Gross</p>
@@ -434,6 +519,12 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           <div className="mt-3 pt-3 border-t border-rbn-orange/20">
             <p className="text-xs text-slate-500">Grand Total Nett Sales</p>
             <p className="text-2xl font-bold text-rbn-red text-rupiah">{formatRupiah(calcs.grand_total_nett_sales)}</p>
+            {qrisMdr > 0 && (
+              <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                <TrendingDown className="w-3 h-3 text-red-400" />
+                Sudah dipotong biaya MDR QRIS sebesar {formatRupiah(qrisMdr)} ({(QRIS_MDR_RATE * 100).toFixed(1)}%)
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -459,7 +550,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           Batal
         </button>
 
-        {/* Posted/Void: only save changes (preserves status) */}
         {(isEditingPosted || isEditingVoid) && (
           <button
             type="button"
@@ -472,7 +562,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           </button>
         )}
 
-        {/* Submitted: can revert to draft or resave as submitted */}
         {showSubmittedButtons && (
           <>
             <button
@@ -495,7 +584,6 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           </>
         )}
 
-        {/* New or Draft: can save as draft or submit */}
         {showDraftAndSubmitButtons && (
           <>
             <button
@@ -504,7 +592,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
               onClick={() => { submitIntentRef.current = 'draft'; handleSubmit(onSubmit)() }}
               className="btn-outline text-sm"
             >
-              {saving ? 'Menyimpan...' : initialData ? 'Simpan Draft' : 'Simpan Draft'}
+              {saving ? 'Menyimpan...' : 'Simpan Draft'}
             </button>
             <button
               type="button"

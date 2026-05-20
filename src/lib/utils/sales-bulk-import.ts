@@ -1,5 +1,7 @@
 import { calculateSales } from './calculations'
 
+const QRIS_MDR_RATE = 0.007
+
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const MONTHS_LONG = [
   'January',
@@ -57,6 +59,8 @@ export type ParsedSalesImportRow = {
   report_date: string
   cash: number
   qris: number
+  qris_gross: number
+  qris_mdr: number
   gofood_gross: number
   gofood_promo: number
   gofood_commission: number
@@ -191,7 +195,7 @@ function parseTemplateDate(value: string, year: number) {
 function hasAnySalesValue(row: ParsedSalesImportRow) {
   return (
     row.cash +
-      row.qris +
+      row.qris_gross +
       row.gofood_gross +
       row.gofood_promo +
       row.gofood_commission +
@@ -234,11 +238,16 @@ export function parseSalesBulkCsv(text: string, year: number): SalesImportParseR
     }
 
     const gofoodCompensation = parseMoney(row[6])
+    const qrisGross = parseMoney(row[2])
+    const qrisMdr = Math.round(qrisGross * QRIS_MDR_RATE)
+    const qrisNett = qrisGross - qrisMdr
     const base = {
       sourceRow,
       report_date: reportDate,
       cash: parseMoney(row[1]),
-      qris: parseMoney(row[2]),
+      qris: qrisNett,
+      qris_gross: qrisGross,
+      qris_mdr: qrisMdr,
       gofood_gross: parseMoney(row[3]),
       gofood_commission: parseMoney(row[4]),
       gofood_promo: parseMoney(row[5]),

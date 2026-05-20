@@ -64,6 +64,8 @@ function toInsertPayload(
     branch_id: branchId,
     cash: row.cash,
     qris: row.qris,
+    qris_gross: row.qris_gross,
+    qris_mdr: row.qris_mdr,
     gofood_gross: row.gofood_gross,
     gofood_promo: row.gofood_promo,
     gofood_commission: row.gofood_commission,
