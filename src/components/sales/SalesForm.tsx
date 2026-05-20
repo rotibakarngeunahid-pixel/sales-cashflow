@@ -90,6 +90,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   const [showGrabfood, setShowGrabfood] = useState(false)
   const [showShopeefood, setShowShopeefood] = useState(false)
   const [calcs, setCalcs] = useState<ReturnType<typeof calculateSales> | null>(null)
+  // MDR off by default; auto-enable if editing a record that already has MDR recorded
+  const [qrisMdrEnabled, setQrisMdrEnabled] = useState(() => (initialData?.qris_mdr ?? 0) > 0)
 
   const submitIntentRef = useRef<'draft' | 'submitted'>('draft')
 
@@ -133,9 +135,9 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     }
   }, [initialData])
 
-  // Derive QRIS MDR values in real-time
+  // Derive QRIS MDR values in real-time (only when MDR is enabled)
   const qrisGross = Number(watchedValues.qris_gross) || 0
-  const qrisMdr = Math.round(qrisGross * QRIS_MDR_RATE)
+  const qrisMdr = qrisMdrEnabled ? Math.round(qrisGross * QRIS_MDR_RATE) : 0
   const qrisNett = qrisGross - qrisMdr
 
   useEffect(() => {
@@ -376,14 +378,28 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
             {errors.cash && <p className="text-xs text-red-500">{errors.cash.message}</p>}
           </div>
 
-          {/* QRIS card with MDR breakdown */}
+          {/* QRIS card with optional MDR */}
           <div className="rounded-xl border border-slate-200 bg-white p-3 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <QrCode className="w-3.5 h-3.5 text-blue-500" />
                 <span className="text-xs font-bold text-slate-600 uppercase tracking-wide">QRIS</span>
               </div>
-              <span className="text-xs text-slate-400 font-medium">MDR {(QRIS_MDR_RATE * 100).toFixed(1)}%</span>
+              {/* MDR toggle — only show when QRIS has value */}
+              {qrisGross > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setQrisMdrEnabled(!qrisMdrEnabled)}
+                  className={`flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+                    qrisMdrEnabled
+                      ? 'bg-orange-100 border-orange-300 text-orange-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 hover:border-slate-300'
+                  }`}
+                >
+                  MDR {(QRIS_MDR_RATE * 100).toFixed(1)}%
+                  <span className={`w-1.5 h-1.5 rounded-full ${qrisMdrEnabled ? 'bg-orange-500' : 'bg-slate-300'}`} />
+                </button>
+              )}
             </div>
             <input
               type="number"
@@ -394,7 +410,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
               placeholder="Nominal QRIS..."
             />
             {errors.qris_gross && <p className="text-xs text-red-500">{errors.qris_gross.message}</p>}
-            {qrisGross > 0 && (
+            {qrisGross > 0 && qrisMdrEnabled && (
               <div className="grid grid-cols-2 gap-1 pt-2 border-t border-slate-100">
                 <div>
                   <p className="text-xs text-slate-400">Biaya MDR</p>
@@ -416,7 +432,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
               Total Offline:{' '}
               <span className="font-bold text-slate-800 text-rupiah">{formatRupiah(calcs.total_offline)}</span>
             </span>
-            {qrisMdr > 0 && (
+            {qrisMdrEnabled && qrisMdr > 0 && (
               <span className="flex items-center gap-1 text-red-400">
                 <TrendingDown className="w-3 h-3" />
                 MDR QRIS: -{formatRupiah(qrisMdr)}
@@ -492,7 +508,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
             <div>
               <p className="text-slate-500 text-xs">Total Offline</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_offline)}</p>
-              {qrisMdr > 0 && (
+              {qrisMdrEnabled && qrisMdr > 0 && (
                 <p className="text-xs text-red-400 mt-0.5">
                   incl. MDR QRIS -{formatRupiah(qrisMdr)}
                 </p>
@@ -519,7 +535,7 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           <div className="mt-3 pt-3 border-t border-rbn-orange/20">
             <p className="text-xs text-slate-500">Grand Total Nett Sales</p>
             <p className="text-2xl font-bold text-rbn-red text-rupiah">{formatRupiah(calcs.grand_total_nett_sales)}</p>
-            {qrisMdr > 0 && (
+            {qrisMdrEnabled && qrisMdr > 0 && (
               <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
                 <TrendingDown className="w-3 h-3 text-red-400" />
                 Sudah dipotong biaya MDR QRIS sebesar {formatRupiah(qrisMdr)} ({(QRIS_MDR_RATE * 100).toFixed(1)}%)

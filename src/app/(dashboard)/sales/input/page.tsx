@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, CalendarCheck, ClipboardPenLine, CheckCircle2, FileSpreadsheet, ChevronDown, ChevronUp } from 'lucide-react'
 import SalesForm from '@/components/sales/SalesForm'
 import SalesBulkImport from '@/components/sales/SalesBulkImport'
 
@@ -12,6 +12,7 @@ const SALES_REPORTS_TOAST_KEY = 'salesReportsToast'
 export default function SalesInputPage() {
   const router = useRouter()
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [showBulkImport, setShowBulkImport] = useState(false)
   const fallbackTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -64,7 +65,7 @@ export default function SalesInputPage() {
         </div>
       )}
 
-      {/* Info cards */}
+      {/* Info cards + Bulk Import toggle on same row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
           <div className="flex items-center gap-2 text-emerald-700">
@@ -82,7 +83,23 @@ export default function SalesInputPage() {
         </div>
       </div>
 
-      <SalesBulkImport onSuccess={handleSuccess} />
+      {/* Bulk Import — collapsed by default */}
+      <div>
+        <button
+          type="button"
+          onClick={() => setShowBulkImport(!showBulkImport)}
+          className="flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-800 border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 px-3 py-2 rounded-lg transition-colors w-full sm:w-auto"
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          Import CSV Massal
+          {showBulkImport ? <ChevronUp className="w-3.5 h-3.5 ml-auto sm:ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto sm:ml-1" />}
+        </button>
+        {showBulkImport && (
+          <div className="mt-3">
+            <SalesBulkImport onSuccess={handleSuccess} />
+          </div>
+        )}
+      </div>
 
       <div className="card p-4 sm:p-5">
         <SalesForm
