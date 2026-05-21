@@ -8,6 +8,7 @@ import {
   FileText,
   Wallet,
   BarChart3,
+  LineChart,
   Tag,
   Upload,
   PackageSearch,
@@ -38,6 +39,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/sales/input', label: 'Input Penjualan', icon: PlusSquare },
       { href: '/sales/reports', label: 'Laporan Penjualan', icon: FileText },
+      { href: '/sales/analysis', label: 'Analisa Sales', icon: LineChart },
     ],
   },
   {
