@@ -347,7 +347,8 @@ export default function CashflowPage() {
       cash_in: isCashIn ? data.amount : 0,
       cash_out: isCashIn ? 0 : data.amount,
       amount: data.amount,
-      source: 'manual' as const,
+      // Saat edit: pertahankan source aslinya. Saat tambah baru: set 'manual'.
+      ...(editTx ? {} : { source: 'manual' as const }),
       updated_by: user?.id ?? null,
     }
 
@@ -678,7 +679,7 @@ export default function CashflowPage() {
                     <td className="table-cell"><CashflowStatusBadge status={tx.status} /></td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
-                        {tx.source === 'manual' && tx.status === 'active' && (
+                        {tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order' && (
                           <>
                             <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
                               <Pencil className="w-3.5 h-3.5" />
