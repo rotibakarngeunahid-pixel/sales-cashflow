@@ -474,11 +474,11 @@ export default function SalesAnalysisPage() {
             return {
               sales: mergeWithKasir(
                 salesResult.data || [],
-                aggregateKasir(kasirResult.data)
+                aggregateKasir(kasirResult.data ?? [])
               ),
               prevSales: mergeWithKasir(
                 prevResult.data || [],
-                aggregateKasir(kasirPrevResult.data)
+                aggregateKasir(kasirPrevResult.data ?? [])
               ),
             }
           },
