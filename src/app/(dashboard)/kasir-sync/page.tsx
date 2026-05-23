@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { RefreshCw, ClipboardCheck, AlertCircle, CheckCircle2, XCircle, Clock, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils/format'
 import KasirSyncTriggerButton from './TriggerButton'
+import KasirSyncResetButton from './ResetButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,6 +75,7 @@ export default async function KasirSyncPage() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {isOwner && <KasirSyncResetButton />}
           {isOwner && <KasirSyncTriggerButton />}
           <a
             href="/kasir-sync/review"
