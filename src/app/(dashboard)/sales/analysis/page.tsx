@@ -385,18 +385,102 @@ export default function SalesAnalysisPage() {
               .lte('report_date', prevEndDate)
               .order('report_date', { ascending: true })
 
+            // Kasir sync: ambil penjualan yang sudah dikonfirmasi
+            let kasirQuery = supabase
+              .from('kasir_sync_queue')
+              .select('tanggal, branch_id, total_penjualan, metode_pembayaran, branch:branches(id,name)')
+              .eq('item_type', 'penjualan')
+              .eq('status', 'confirmed')
+              .not('branch_id', 'is', null)
+              .gte('tanggal', startDate)
+              .lte('tanggal', endDate)
+
+            let kasirPrevQuery = supabase
+              .from('kasir_sync_queue')
+              .select('tanggal, branch_id, total_penjualan, metode_pembayaran')
+              .eq('item_type', 'penjualan')
+              .eq('status', 'confirmed')
+              .not('branch_id', 'is', null)
+              .gte('tanggal', prevStartDate)
+              .lte('tanggal', prevEndDate)
+
             if (filterBranch) {
               salesQuery = salesQuery.eq('branch_id', filterBranch)
               prevQuery = prevQuery.eq('branch_id', filterBranch)
+              kasirQuery = kasirQuery.eq('branch_id', filterBranch)
+              kasirPrevQuery = kasirPrevQuery.eq('branch_id', filterBranch)
             }
 
-            const [salesResult, prevResult] = await Promise.all([salesQuery, prevQuery])
+            const [salesResult, prevResult, kasirResult, kasirPrevResult] =
+              await Promise.all([salesQuery, prevQuery, kasirQuery, kasirPrevQuery])
+
             if (salesResult.error) throw salesResult.error
             if (prevResult.error) throw prevResult.error
 
+            // Agregasi kasir sync → synthetic SalesReport per tanggal+cabang
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            function aggregateKasir(items: any[]): SalesReport[] {
+              const map = new Map<string, SalesReport>()
+              for (const item of items ?? []) {
+                if (!item.branch_id) continue
+                const key = `${item.tanggal}:${item.branch_id}`
+                if (!map.has(key)) {
+                  map.set(key, {
+                    id: `kasir-sync:${key}`,
+                    report_date: item.tanggal,
+                    branch_id: item.branch_id,
+                    branch: item.branch ?? null,
+                    cash: 0, qris: 0, qris_gross: 0, qris_mdr: 0,
+                    gofood_gross: 0, gofood_promo: 0, gofood_commission: 0, gofood_nett: 0,
+                    grabfood_gross: 0, grabfood_promo: 0, grabfood_commission: 0, grabfood_ads: 0, grabfood_nett: 0,
+                    shopeefood_gross: 0, shopeefood_promo: 0, shopeefood_commission: 0, shopeefood_nett: 0,
+                    total_offline: 0, total_online_gross: 0, total_online_nett: 0,
+                    total_online_deduction: 0, grand_total_nett_sales: 0, online_deduction_percentage: 0,
+                    status: 'posted' as const,
+                    notes: null, created_by: null, updated_by: null,
+                    created_at: item.tanggal, updated_at: item.tanggal,
+                  } as SalesReport)
+                }
+                const entry = map.get(key)!
+                const amount = toN(item.total_penjualan)
+                const metode = String(item.metode_pembayaran ?? '').toLowerCase()
+                if (metode === 'tunai' || metode === 'cash') {
+                  entry.cash = toN(entry.cash) + amount
+                  entry.total_offline = toN(entry.total_offline) + amount
+                } else if (metode === 'qris') {
+                  entry.qris = toN(entry.qris) + amount
+                  entry.qris_gross = toN(entry.qris_gross) + amount
+                  entry.total_offline = toN(entry.total_offline) + amount
+                } else {
+                  entry.cash = toN(entry.cash) + amount  // fallback ke cash
+                  entry.total_offline = toN(entry.total_offline) + amount
+                }
+                entry.grand_total_nett_sales = toN(entry.grand_total_nett_sales) + amount
+              }
+              return Array.from(map.values())
+            }
+
+            // Merge: sales_reports manual diutamakan; kasir sync hanya untuk
+            // tanggal+cabang yang belum ada laporan manualnya
+            function mergeWithKasir(actual: SalesReport[], kasir: SalesReport[]): SalesReport[] {
+              const actualKeys = new Set(actual.map((r) => `${r.report_date}:${r.branch_id}`))
+              const kasirOnly = kasir.filter(
+                (k) => !actualKeys.has(`${k.report_date}:${k.branch_id}`)
+              )
+              return [...actual, ...kasirOnly].sort((a, b) =>
+                a.report_date.localeCompare(b.report_date)
+              )
+            }
+
             return {
-              sales: salesResult.data || [],
-              prevSales: prevResult.data || [],
+              sales: mergeWithKasir(
+                salesResult.data || [],
+                aggregateKasir(kasirResult.data)
+              ),
+              prevSales: mergeWithKasir(
+                prevResult.data || [],
+                aggregateKasir(kasirPrevResult.data)
+              ),
             }
           },
           { ttlMs: 60_000, force: options.force || Boolean(cached) },
