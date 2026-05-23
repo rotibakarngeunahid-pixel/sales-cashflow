@@ -650,6 +650,36 @@ export interface Database {
         }
         Relationships: []
       }
+      kasir_branch_mappings: {
+        Row: {
+          id: string
+          kasir_name: string
+          branch_id: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          kasir_name: string
+          branch_id: string
+          created_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          kasir_name?: string
+          branch_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'kasir_branch_mappings_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          }
+        ]
+      }
       kasir_sync_queue: {
         Row: {
           id: string
@@ -700,6 +730,7 @@ export interface Database {
           raw_data?: Record<string, unknown> | null
         }
         Update: {
+          branch_id?: string | null
           status?: KasirSyncItemStatus
           confirmed_at?: string | null
           confirmed_by?: string | null
@@ -726,6 +757,10 @@ export interface Database {
       get_email_by_username: {
         Args: { p_username: string }
         Returns: string | null
+      }
+      reset_kasir_sync_queue_pending: {
+        Args: Record<string, never>
+        Returns: { deleted: number }
       }
     }
     Enums: {
