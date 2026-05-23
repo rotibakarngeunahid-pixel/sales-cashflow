@@ -8,12 +8,21 @@ export const dynamic = 'force-dynamic'
 // Dipakai untuk bersihkan data lama sebelum filter dipasang
 // Hanya owner yang bisa melakukan ini
 //
-// Requires RLS policy "sync_queue_delete_owner" di database:
-//   CREATE POLICY "sync_queue_delete_owner" ON kasir_sync_queue
-//     FOR DELETE USING (
-//       EXISTS (SELECT 1 FROM profiles
-//               WHERE profiles.id = auth.uid() AND profiles.role = 'owner')
-//     );
+// Menggunakan RPC function `reset_kasir_sync_queue_pending()` dengan
+// SECURITY DEFINER agar bypass RLS tanpa butuh service role key.
+// Jalankan SQL berikut di Supabase SQL Editor sebelum pakai endpoint ini:
+//
+//   CREATE OR REPLACE FUNCTION reset_kasir_sync_queue_pending()
+//   RETURNS json LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+//   DECLARE deleted_count integer; user_role text;
+//   BEGIN
+//     SELECT role INTO user_role FROM profiles WHERE id = auth.uid();
+//     IF user_role IS DISTINCT FROM 'owner' THEN RAISE EXCEPTION 'Unauthorized'; END IF;
+//     DELETE FROM kasir_sync_queue WHERE status = 'pending';
+//     GET DIAGNOSTICS deleted_count = ROW_COUNT;
+//     UPDATE kasir_sync_batches SET status = 'failed', error_message = 'Direset manual oleh owner' WHERE status = 'running';
+//     RETURN json_build_object('deleted', deleted_count);
+//   END; $$;
 // =============================================
 
 export async function DELETE() {
@@ -27,41 +36,24 @@ export async function DELETE() {
     )
   }
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
+  // Panggil RPC function — validasi owner dilakukan di dalam function (SECURITY DEFINER)
+  const { data, error } = await supabase.rpc('reset_kasir_sync_queue_pending')
 
-  if (profile?.role !== 'owner') {
+  if (error) {
+    const msg = error.message.includes('Unauthorized')
+      ? 'Hanya owner yang bisa mereset antrian.'
+      : `Gagal reset antrian: ${error.message}`
     return NextResponse.json(
-      { success: false, message: 'Hanya owner yang bisa mereset antrian.' },
-      { status: 403 }
+      { success: false, message: msg },
+      { status: error.message.includes('Unauthorized') ? 403 : 500 }
     )
   }
 
-  // Hapus semua item pending dari queue
-  const { count: deletedQueue, error: queueErr } = await supabase
-    .from('kasir_sync_queue')
-    .delete({ count: 'exact' })
-    .eq('status', 'pending')
-
-  if (queueErr) {
-    return NextResponse.json(
-      { success: false, message: `Gagal reset antrian: ${queueErr.message}` },
-      { status: 500 }
-    )
-  }
-
-  // Tandai batch yang stuck 'running' sebagai failed
-  await supabase
-    .from('kasir_sync_batches')
-    .update({ status: 'failed', error_message: 'Direset manual oleh owner' })
-    .eq('status', 'running')
+  const deleted = (data as { deleted: number } | null)?.deleted ?? 0
 
   return NextResponse.json({
     success: true,
-    deleted: deletedQueue ?? 0,
-    message: `${deletedQueue ?? 0} item pending berhasil dihapus dari antrian.`,
+    deleted,
+    message: `${deleted} item pending berhasil dihapus dari antrian.`,
   })
 }
