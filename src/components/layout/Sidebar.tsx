@@ -18,6 +18,7 @@ import {
   Settings,
   X,
   ChevronRight,
+  Eraser,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -58,6 +59,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/branches', label: 'Cabang', icon: Building2 },
       { href: '/users', label: 'User Management', icon: Users, ownerOnly: true },
       { href: '/audit-log', label: 'Audit Log', icon: ClipboardList, ownerOnly: true },
+      { href: '/data-management', label: 'Manajemen Data', icon: Eraser, ownerOnly: true },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },
