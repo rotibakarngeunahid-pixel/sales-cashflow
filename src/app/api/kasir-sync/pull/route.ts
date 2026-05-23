@@ -89,8 +89,7 @@ export async function POST(request: Request) {
   } catch { /* body kosong ok */ }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await pullKasirToQueue(supabase as any, {
+    const result = await pullKasirToQueue(supabase as ReturnType<typeof createServiceClient>, {
       triggeredBy,
       dateFrom,
       dateTo,
