@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Eraser,
   Store,
+  RefreshCw,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -51,6 +52,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/cashflow/import', label: 'Import Cashflow', icon: Upload },
       { href: '/cashflow/import-bahan-baku', label: 'Import Bahan Baku', icon: PackageSearch },
       { href: '/kasir-import', label: 'Import Kasir', icon: Store },
+      { href: '/kasir-sync', label: 'Sinkronisasi Kasir', icon: RefreshCw },
       { href: '/cashflow/analysis', label: 'Analisa Cashflow', icon: BarChart3 },
       { href: '/cashflow/categories', label: 'Kategori Cashflow', icon: Tag },
     ],

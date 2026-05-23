@@ -1,4 +1,7 @@
 export type UserRole = 'owner' | 'admin'
+export type KasirSyncBatchStatus = 'running' | 'completed' | 'failed' | 'partial'
+export type KasirSyncItemStatus = 'pending' | 'confirmed' | 'rejected'
+export type KasirSyncItemType = 'penjualan' | 'kas_keluar'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
 export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses'
@@ -137,6 +140,53 @@ export interface AuditLog {
   changed_by: string | null
   changed_at: string
   changer?: Pick<Profile, 'full_name' | 'email'> | null
+}
+
+export interface KasirSyncBatch {
+  id: string
+  started_at: string
+  completed_at: string | null
+  status: KasirSyncBatchStatus
+  period_from: string | null
+  period_to: string | null
+  total_pulled: number
+  new_count: number
+  skipped_count: number
+  error_message: string | null
+  triggered_by: string
+  created_at: string
+}
+
+export interface KasirSyncQueueItem {
+  id: string
+  batch_id: string | null
+  item_type: KasirSyncItemType
+  kasir_id: string
+  tanggal: string
+  waktu: string
+  cabang: string
+  branch_id: string | null
+  // penjualan
+  total_penjualan: number | null
+  subtotal: number | null
+  diskon: number | null
+  metode_pembayaran: string | null
+  kasir_name: string | null
+  // kas keluar
+  kategori: string | null
+  nominal: number | null
+  keterangan: string | null
+  dicatat_oleh: string | null
+  // workflow
+  status: KasirSyncItemStatus
+  confirmed_at: string | null
+  confirmed_by: string | null
+  rejected_at: string | null
+  rejected_by: string | null
+  reject_reason: string | null
+  cashflow_transaction_id: string | null
+  raw_data: Record<string, unknown> | null
+  pulled_at: string
 }
 
 export interface RawMaterialImportLog {
@@ -561,6 +611,109 @@ export interface Database {
             columns: ['changed_by']
             isOneToOne: false
             referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      kasir_sync_batches: {
+        Row: {
+          id: string
+          started_at: string
+          completed_at: string | null
+          status: KasirSyncBatchStatus
+          period_from: string | null
+          period_to: string | null
+          total_pulled: number
+          new_count: number
+          skipped_count: number
+          error_message: string | null
+          triggered_by: string
+          created_at: string
+        }
+        Insert: {
+          status?: KasirSyncBatchStatus
+          period_from?: string | null
+          period_to?: string | null
+          total_pulled?: number
+          new_count?: number
+          skipped_count?: number
+          error_message?: string | null
+          triggered_by?: string
+        }
+        Update: {
+          status?: KasirSyncBatchStatus
+          completed_at?: string | null
+          total_pulled?: number
+          new_count?: number
+          skipped_count?: number
+          error_message?: string | null
+        }
+        Relationships: []
+      }
+      kasir_sync_queue: {
+        Row: {
+          id: string
+          batch_id: string | null
+          item_type: KasirSyncItemType
+          kasir_id: string
+          tanggal: string
+          waktu: string
+          cabang: string
+          branch_id: string | null
+          total_penjualan: number | null
+          subtotal: number | null
+          diskon: number | null
+          metode_pembayaran: string | null
+          kasir_name: string | null
+          kategori: string | null
+          nominal: number | null
+          keterangan: string | null
+          dicatat_oleh: string | null
+          status: KasirSyncItemStatus
+          confirmed_at: string | null
+          confirmed_by: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          reject_reason: string | null
+          cashflow_transaction_id: string | null
+          raw_data: Record<string, unknown> | null
+          pulled_at: string
+        }
+        Insert: {
+          batch_id?: string | null
+          item_type: KasirSyncItemType
+          kasir_id: string
+          tanggal: string
+          waktu?: string
+          cabang: string
+          branch_id?: string | null
+          total_penjualan?: number | null
+          subtotal?: number | null
+          diskon?: number | null
+          metode_pembayaran?: string | null
+          kasir_name?: string | null
+          kategori?: string | null
+          nominal?: number | null
+          keterangan?: string | null
+          dicatat_oleh?: string | null
+          status?: KasirSyncItemStatus
+          raw_data?: Record<string, unknown> | null
+        }
+        Update: {
+          status?: KasirSyncItemStatus
+          confirmed_at?: string | null
+          confirmed_by?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          reject_reason?: string | null
+          cashflow_transaction_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'kasir_sync_queue_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
             referencedColumns: ['id']
           }
         ]
