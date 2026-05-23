@@ -1,7 +1,11 @@
 export type UserRole = 'owner' | 'admin'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales' | 'purchase_order'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses'
+
+export type KasirImportType = 'sales' | 'expenses'
+export type KasirImportStatus = 'success' | 'failed' | 'partial'
+export type KasirPaymentMethod = 'Tunai' | 'QRIS' | 'Tunai+QRIS'
 export type CashflowStatus = 'active' | 'void'
 export type CategoryDefaultType = 'cash_in' | 'cash_out' | 'both'
 export type RawMaterialImportStatus = 'success' | 'failed'
@@ -93,11 +97,34 @@ export interface CashflowTransaction {
   import_key: string | null
   source_label: string | null
   source_metadata: Record<string, unknown>
+  reference_group_id: string | null
   status: CashflowStatus
   created_by: string | null
   updated_by: string | null
   created_at: string
   updated_at: string
+}
+
+export interface KasirImportLog {
+  id: string
+  import_type: KasirImportType
+  imported_at: string
+  period_start: string
+  period_end: string
+  branch_id: string | null
+  branch_filter: string | null
+  payment_method_filter: string | null
+  total_found: number
+  total_success: number
+  total_failed: number
+  total_skipped: number
+  total_amount: number
+  status: KasirImportStatus
+  message: string | null
+  error_details: Record<string, unknown> | null
+  created_by: string | null
+  created_at: string
+  actor?: Pick<Profile, 'full_name' | 'email'> | null
 }
 
 export interface AuditLog {
@@ -345,6 +372,7 @@ export interface Database {
           import_key: string | null
           source_label: string | null
           source_metadata: Record<string, unknown>
+          reference_group_id: string | null
           status: CashflowStatus
           created_by: string | null
           updated_by: string | null
@@ -365,6 +393,7 @@ export interface Database {
           import_key?: string | null
           source_label?: string | null
           source_metadata?: Record<string, unknown>
+          reference_group_id?: string | null
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -383,6 +412,7 @@ export interface Database {
           import_key?: string | null
           source_label?: string | null
           source_metadata?: Record<string, unknown>
+          reference_group_id?: string | null
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -446,6 +476,57 @@ export interface Database {
         Relationships: [
           {
             foreignKeyName: 'raw_material_import_logs_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      kasir_import_logs: {
+        Row: {
+          id: string
+          import_type: KasirImportType
+          imported_at: string
+          period_start: string
+          period_end: string
+          branch_id: string | null
+          branch_filter: string | null
+          payment_method_filter: string | null
+          total_found: number
+          total_success: number
+          total_failed: number
+          total_skipped: number
+          total_amount: number
+          status: KasirImportStatus
+          message: string | null
+          error_details: Record<string, unknown> | null
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          import_type: KasirImportType
+          period_start: string
+          period_end: string
+          branch_id?: string | null
+          branch_filter?: string | null
+          payment_method_filter?: string | null
+          total_found?: number
+          total_success?: number
+          total_failed?: number
+          total_skipped?: number
+          total_amount?: number
+          status: KasirImportStatus
+          message?: string | null
+          error_details?: Record<string, unknown> | null
+          created_by?: string | null
+          imported_at?: string
+          created_at?: string
+        }
+        Update: never
+        Relationships: [
+          {
+            foreignKeyName: 'kasir_import_logs_created_by_fkey'
             columns: ['created_by']
             isOneToOne: false
             referencedRelation: 'profiles'
