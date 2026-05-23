@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X, Upload } from 'lucide-react'
+import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X, Upload, Scissors } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
@@ -10,6 +10,7 @@ import { cashflowSchema, type CashflowFormData } from '@/lib/validations/cashflo
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
+import SplitExpenseModal from './SplitExpenseModal'
 import { CashflowTypeBadge, CashflowStatusBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -136,6 +137,7 @@ export default function CashflowPage() {
   const [filterCat, setFilterCat] = useState('')
 
   const [modalOpen, setModalOpen] = useState(false)
+  const [splitModalOpen, setSplitModalOpen] = useState(false)
   const [editTx, setEditTx] = useState<CashflowTransaction | null>(null)
   const [voidTarget, setVoidTarget] = useState<CashflowTransaction | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null)
@@ -530,6 +532,13 @@ export default function CashflowPage() {
             <FileSpreadsheet className="w-4 h-4" />
             <span className="hidden sm:inline">Export</span>
           </button>
+          <button
+            onClick={() => setSplitModalOpen(true)}
+            className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto text-orange-600 border-orange-200 hover:bg-orange-50"
+          >
+            <Scissors className="w-4 h-4" />
+            Biaya Bersama
+          </button>
           <button onClick={openAdd} className="btn-primary flex w-full items-center gap-2 sm:w-auto">
             <Plus className="w-4 h-4" /> Tambah Transaksi
           </button>
@@ -843,6 +852,21 @@ export default function CashflowPage() {
         reason={deleteReason}
         onReasonChange={setDeleteReason}
       />
+
+      {/* Split Expense Modal */}
+      {splitModalOpen && (
+        <SplitExpenseModal
+          branches={branches}
+          categories={categories}
+          onClose={() => setSplitModalOpen(false)}
+          onSuccess={() => {
+            invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+            load({ force: true })
+            loadCashPositions({ force: true })
+            toastTimerRef('Biaya bersama berhasil disimpan.', 'success')
+          }}
+        />
+      )}
     </div>
   )
 }
