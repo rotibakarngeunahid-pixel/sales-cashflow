@@ -385,7 +385,7 @@ export default function SalesAnalysisPage() {
               .lte('report_date', prevEndDate)
               .order('report_date', { ascending: true })
 
-            // Kasir sync: ambil penjualan yang sudah dikonfirmasi
+            // Kasir sync: ambil penjualan yang sudah dikonfirmasi (masuk cashflow)
             let kasirQuery = supabase
               .from('kasir_sync_queue')
               .select('tanggal, branch_id, total_penjualan, metode_pembayaran, branch:branches(id,name)')
