@@ -288,6 +288,25 @@ async function loadBranches(supabase: Supabase): Promise<LocalBranch[]> {
   return data || []
 }
 
+/**
+ * Mapping manual nama cabang kasir → branch_id lokal.
+ * Diisi owner via UI ketika ada "Cabang tidak dikenali".
+ * Gracefully returns empty map if table doesn't exist yet.
+ */
+async function loadBranchMappings(supabase: Supabase): Promise<Map<string, string>> {
+  const { data, error } = await supabase
+    .from('kasir_branch_mappings')
+    .select('kasir_name, branch_id')
+
+  if (error) return new Map()  // Tabel belum ada — abaikan
+
+  const map = new Map<string, string>()
+  for (const row of (data ?? []) as { kasir_name: string; branch_id: string }[]) {
+    map.set(row.kasir_name, row.branch_id)
+  }
+  return map
+}
+
 function matchBranch(name: string, branches: LocalBranch[]): LocalBranch | null {
   const n = normalizeBranchName(name)
   return (
@@ -430,7 +449,11 @@ export async function pullKasirToQueue(
   let skippedCount = 0
   let skippedPayment = 0  // counter khusus metode bukan Cash/QRIS
 
-  const branches = await loadBranches(supabase)
+  // Load branches + manual mappings secara paralel
+  const [branches, branchMappings] = await Promise.all([
+    loadBranches(supabase),
+    loadBranchMappings(supabase),
+  ])
 
   // ---- Tarik Penjualan ----
   try {
@@ -464,6 +487,8 @@ export async function pullKasirToQueue(
 
       const cabang = str(raw, 'cabang', 'branch_name', 'outlet')
       const matchedBranch = cabang ? matchBranch(cabang, branches) : null
+      // Cek mapping manual jika auto-match gagal
+      const branchId = matchedBranch?.id ?? (cabang ? (branchMappings.get(cabang) ?? null) : null)
 
       const rowData = {
         batch_id: batchId,
@@ -472,7 +497,7 @@ export async function pullKasirToQueue(
         tanggal,
         waktu,
         cabang: cabang || 'Tidak Diketahui',
-        branch_id: matchedBranch?.id ?? null,
+        branch_id: branchId,
         total_penjualan: num(raw, 'total_penjualan', 'total', 'amount'),
         subtotal: num(raw, 'subtotal') || null,
         diskon: num(raw, 'diskon', 'discount') || null,
@@ -523,6 +548,8 @@ export async function pullKasirToQueue(
 
       const cabang = str(raw, 'cabang', 'branch_name', 'outlet')
       const matchedBranch = cabang ? matchBranch(cabang, branches) : null
+      // Cek mapping manual jika auto-match gagal
+      const branchId = matchedBranch?.id ?? (cabang ? (branchMappings.get(cabang) ?? null) : null)
 
       const rowData = {
         batch_id: batchId,
@@ -531,7 +558,7 @@ export async function pullKasirToQueue(
         tanggal,
         waktu,
         cabang: cabang || 'Tidak Diketahui',
-        branch_id: matchedBranch?.id ?? null,
+        branch_id: branchId,
         kategori: str(raw, 'kategori', 'category') || null,
         nominal: num(raw, 'nominal', 'amount', 'total') || null,
         keterangan: str(raw, 'keterangan', 'description', 'notes') || null,

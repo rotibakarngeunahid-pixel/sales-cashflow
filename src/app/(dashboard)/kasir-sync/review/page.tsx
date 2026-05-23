@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import {
   CheckCircle2, XCircle, Clock, RefreshCw, ArrowLeft,
   ShoppingCart, Wallet, AlertCircle, X,
-  CheckSquare, Square,
+  CheckSquare, Square, ChevronDown, MapPin,
 } from 'lucide-react'
 import { formatRupiah, cn } from '@/lib/utils/format'
 
@@ -40,6 +40,11 @@ interface QueueItem {
   reject_reason: string | null
 }
 
+interface Branch {
+  id: string
+  name: string
+}
+
 // =============================================
 // Halaman Review Queue
 // =============================================
@@ -48,6 +53,9 @@ export default function KasirSyncReviewPage() {
   const [items, setItems] = useState<QueueItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Branches untuk picker cabang
+  const [branches, setBranches] = useState<Branch[]>([])
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<ItemStatus | 'all'>('pending')
@@ -69,6 +77,18 @@ export default function KasirSyncReviewPage() {
   // Action feedback
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const feedbackTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  // ---- Load branches (sekali saat mount) ----
+  useEffect(() => {
+    const supabase = createClient()
+    supabase
+      .from('branches')
+      .select('id, name')
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .order('name')
+      .then(({ data }) => setBranches(data ?? []))
+  }, [])
 
   // ---- Load data ----
   const loadItems = useCallback(async (reset = false) => {
@@ -124,7 +144,31 @@ export default function KasirSyncReviewPage() {
   function showFeedback(type: 'success' | 'error', msg: string) {
     clearTimeout(feedbackTimer.current)
     setFeedback({ type, msg })
-    feedbackTimer.current = setTimeout(() => setFeedback(null), 4000)
+    feedbackTimer.current = setTimeout(() => setFeedback(null), 5000)
+  }
+
+  // ---- Map branch ----
+  async function handleMapBranch(kasirName: string, branchId: string): Promise<void> {
+    const res = await fetch('/api/kasir-sync/map-branch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kasir_name: kasirName, branch_id: branchId }),
+    })
+    const data = await res.json()
+    if (data.success) {
+      showFeedback('success', data.message)
+      // Optimistic update: set branch_id di semua item dengan cabang yang sama
+      setItems((prev) =>
+        prev.map((item) =>
+          item.cabang === kasirName && item.status === 'pending'
+            ? { ...item, branch_id: branchId }
+            : item
+        )
+      )
+    } else {
+      showFeedback('error', data.message || 'Gagal menyimpan mapping.')
+      throw new Error(data.message)
+    }
   }
 
   // ---- Selection helpers ----
@@ -199,9 +243,16 @@ export default function KasirSyncReviewPage() {
   }
 
   // ---- Filter counts ----
-  const allPendingCount = items.filter((i) => i.status === 'pending').length
   const selectedPending = Array.from(selected).filter((id) =>
     items.find((i) => i.id === id && i.status === 'pending')
+  )
+
+  // Pending items yang bisa dikonfirmasi (sudah punya branch_id)
+  const confirmableSelected = selectedPending.filter((id) =>
+    items.find((i) => i.id === id && i.branch_id !== null)
+  )
+  const unresolvableSelected = selectedPending.filter((id) =>
+    items.find((i) => i.id === id && i.branch_id === null)
   )
 
   return (
@@ -325,15 +376,22 @@ export default function KasirSyncReviewPage() {
               <span className="text-slate-300">|</span>
               <span className="text-sm text-slate-500">
                 {selectedPending.length} dipilih
+                {unresolvableSelected.length > 0 && (
+                  <span className="ml-1 text-amber-500">
+                    ({unresolvableSelected.length} belum ada cabang)
+                  </span>
+                )}
               </span>
-              <button
-                onClick={() => handleConfirm(selectedPending)}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Konfirmasi ({selectedPending.length})
-              </button>
+              {confirmableSelected.length > 0 && (
+                <button
+                  onClick={() => handleConfirm(confirmableSelected)}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Konfirmasi ({confirmableSelected.length})
+                </button>
+              )}
               <button
                 onClick={() =>
                   setRejectModal({ ids: selectedPending, reason: '', loading: false })
@@ -406,6 +464,8 @@ export default function KasirSyncReviewPage() {
                   <QueueRow
                     key={item.id}
                     item={item}
+                    branches={branches}
+                    onMapBranch={handleMapBranch}
                     showCheckbox={statusFilter === 'pending'}
                     isSelected={selected.has(item.id)}
                     onToggle={() => toggleSelect(item.id)}
@@ -497,6 +557,8 @@ export default function KasirSyncReviewPage() {
 
 function QueueRow({
   item,
+  branches,
+  onMapBranch,
   showCheckbox,
   isSelected,
   onToggle,
@@ -505,6 +567,8 @@ function QueueRow({
   disabled,
 }: {
   item: QueueItem
+  branches: Branch[]
+  onMapBranch: (kasirName: string, branchId: string) => Promise<void>
   showCheckbox: boolean
   isSelected: boolean
   onToggle: () => void
@@ -521,7 +585,7 @@ function QueueRow({
       className={cn(
         'transition-colors',
         isSelected ? 'bg-rbn-red/5' : 'hover:bg-slate-50',
-        noBranch && item.status === 'pending' ? 'bg-amber-50/50' : ''
+        noBranch && item.status === 'pending' ? 'bg-amber-50/30' : ''
       )}
     >
       {showCheckbox && (
@@ -563,12 +627,20 @@ function QueueRow({
 
       <td className="px-4 py-3">
         <p className="font-medium text-slate-800">{item.cabang}</p>
-        {noBranch && (
+        {noBranch && item.status === 'pending' ? (
+          // Picker inline — hanya untuk item pending
+          <BranchPicker
+            kasirName={item.cabang}
+            branches={branches}
+            onMap={(branchId) => onMapBranch(item.cabang, branchId)}
+          />
+        ) : noBranch ? (
+          // Sudah confirmed/rejected tapi cabang tidak dikenali (data lama)
           <p className="text-xs text-amber-600 font-semibold mt-0.5 flex items-center gap-1">
             <AlertCircle className="w-3 h-3" />
             Cabang tidak dikenali
           </p>
-        )}
+        ) : null}
       </td>
 
       <td className="px-4 py-3 max-w-xs">
@@ -631,7 +703,7 @@ function QueueRow({
               <button
                 onClick={onConfirm}
                 disabled={disabled || noBranch}
-                title={noBranch ? 'Cabang tidak dikenali — tidak bisa dikonfirmasi' : 'Konfirmasi'}
+                title={noBranch ? 'Pilih cabang dulu sebelum konfirmasi' : 'Konfirmasi'}
                 className={cn(
                   'p-1.5 rounded-lg text-xs font-bold transition-colors',
                   noBranch
@@ -656,6 +728,103 @@ function QueueRow({
     </tr>
   )
 }
+
+// =============================================
+// BranchPicker — Dropdown pemilih cabang inline
+// =============================================
+
+function BranchPicker({
+  kasirName,
+  branches,
+  onMap,
+}: {
+  kasirName: string
+  branches: Branch[]
+  onMap: (branchId: string) => Promise<void>
+}) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  async function selectBranch(branchId: string) {
+    setSaving(true)
+    setOpen(false)
+    try {
+      await onMap(branchId)
+      setSaved(true)
+    } catch {
+      // Error sudah ditampilkan di parent via showFeedback
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (saved) return null  // Sudah di-map — hilang sendiri
+
+  return (
+    <div className="relative mt-0.5" ref={ref}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={saving || branches.length === 0}
+        className={cn(
+          'flex items-center gap-1 text-xs font-semibold transition-colors',
+          saving
+            ? 'text-slate-400 cursor-wait'
+            : 'text-amber-600 hover:text-amber-800'
+        )}
+      >
+        {saving ? (
+          <RefreshCw className="w-3 h-3 animate-spin" />
+        ) : (
+          <MapPin className="w-3 h-3" />
+        )}
+        {saving ? 'Menyimpan…' : 'Pilih cabang'}
+        {!saving && <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />}
+      </button>
+
+      {open && branches.length > 0 && (
+        <div className="absolute left-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-xl w-52 py-1 max-h-56 overflow-y-auto">
+          <p className="text-xs text-slate-400 px-3 py-1.5 font-semibold border-b border-slate-100 sticky top-0 bg-white">
+            Pilih cabang untuk &ldquo;{kasirName}&rdquo;
+          </p>
+          {branches.map((b) => (
+            <button
+              key={b.id}
+              onClick={() => selectBranch(b.id)}
+              className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 transition-colors flex items-center gap-2"
+            >
+              <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
+              {b.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {branches.length === 0 && open && (
+        <div className="absolute left-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-lg w-48 p-3">
+          <p className="text-xs text-slate-500">Memuat daftar cabang…</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================
+// Helper Components
+// =============================================
 
 function StatusBadge({ status }: { status: ItemStatus }) {
   const map: Record<ItemStatus, { label: string; className: string; icon: React.ReactNode }> = {
