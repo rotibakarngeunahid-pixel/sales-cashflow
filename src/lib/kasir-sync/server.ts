@@ -2,7 +2,10 @@ import 'server-only'
 // v1.0.1
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-import { normalizeBranchName } from '@/lib/kasir-import/shared'
+import {
+  normalizeBranchName,
+  normalizePaymentMethod,
+} from '@/lib/kasir-import/shared'
 
 type Supabase = SupabaseClient<Database>
 type AnyRecord = Record<string, unknown>
@@ -82,7 +85,8 @@ export interface PullResult {
   periodTo: string
   totalPulled: number
   newCount: number
-  skippedCount: number
+  skippedCount: number    // duplikat / data tidak valid
+  skippedPayment: number  // dilewati karena metode bukan Cash/QRIS
   errors: string[]
 }
 
@@ -424,6 +428,7 @@ export async function pullKasirToQueue(
   let totalPulled = 0
   let newCount = 0
   let skippedCount = 0
+  let skippedPayment = 0  // counter khusus metode bukan Cash/QRIS
 
   const branches = await loadBranches(supabase)
 
@@ -445,6 +450,18 @@ export async function pullKasirToQueue(
       const { tanggal, waktu } = normalizeDate(raw)
       if (!tanggal) { skippedCount++; continue }
 
+      // ── FILTER METODE PEMBAYARAN ──────────────────────────────────────
+      // Hanya izinkan Cash/Tunai dan QRIS. Abaikan ShopeeFood, GoFood,
+      // GrabFood, transfer, voucher platform, dll.
+      const rawMetode = str(raw, 'metode_pembayaran', 'payment_method')
+      const paymentCategory = normalizePaymentMethod(rawMetode)
+      if (!paymentCategory) {
+        // Metode tidak dikenali sebagai Cash atau QRIS → lewati
+        skippedPayment++
+        continue
+      }
+      // ─────────────────────────────────────────────────────────────────
+
       const cabang = str(raw, 'cabang', 'branch_name', 'outlet')
       const matchedBranch = cabang ? matchBranch(cabang, branches) : null
 
@@ -459,7 +476,7 @@ export async function pullKasirToQueue(
         total_penjualan: num(raw, 'total_penjualan', 'total', 'amount'),
         subtotal: num(raw, 'subtotal') || null,
         diskon: num(raw, 'diskon', 'discount') || null,
-        metode_pembayaran: str(raw, 'metode_pembayaran', 'payment_method') || null,
+        metode_pembayaran: paymentCategory,  // simpan hasil normalisasi ('Tunai' atau 'QRIS')
         kasir_name: str(raw, 'kasir', 'cashier') || null,
         raw_data: raw,
         status: 'pending' as const,
@@ -551,6 +568,11 @@ export async function pullKasirToQueue(
         ? 'partial'
         : 'failed'
 
+  // Susun pesan ringkasan untuk error_message (termasuk info metode dilewati)
+  const summaryParts: string[] = []
+  if (skippedPayment > 0) summaryParts.push(`${skippedPayment} dilewati (bukan Cash/QRIS)`)
+  if (errors.length > 0) summaryParts.push(...errors.slice(0, 4))
+
   await supabase
     .from('kasir_sync_batches')
     .update({
@@ -558,8 +580,8 @@ export async function pullKasirToQueue(
       completed_at: new Date().toISOString(),
       total_pulled: totalPulled,
       new_count: newCount,
-      skipped_count: skippedCount,
-      error_message: errors.length > 0 ? errors.slice(0, 5).join(' | ') : null,
+      skipped_count: skippedCount + skippedPayment,
+      error_message: summaryParts.length > 0 ? summaryParts.join(' | ') : null,
     })
     .eq('id', batchId)
 
@@ -571,6 +593,7 @@ export async function pullKasirToQueue(
     totalPulled,
     newCount,
     skippedCount,
+    skippedPayment,
     errors,
   }
 }

@@ -95,6 +95,19 @@ export async function POST(request: Request) {
       dateTo,
     })
 
+    // Buat pesan yang informatif
+    const msgParts: string[] = []
+    if (result.newCount > 0) msgParts.push(`${result.newCount} data baru masuk antrian`)
+    if (result.skippedPayment > 0) msgParts.push(`${result.skippedPayment} dilewati (bukan Cash/QRIS)`)
+    if (result.skippedCount > 0) msgParts.push(`${result.skippedCount} sudah ada`)
+
+    const message =
+      result.status === 'failed'
+        ? `Sinkronisasi gagal. ${result.errors[0] ?? ''}`
+        : msgParts.length > 0
+          ? `Selesai: ${msgParts.join(', ')}.`
+          : 'Selesai. Tidak ada data baru.'
+
     return NextResponse.json({
       success: result.status !== 'failed',
       result: {
@@ -105,14 +118,10 @@ export async function POST(request: Request) {
         totalPulled: result.totalPulled,
         newCount: result.newCount,
         skippedCount: result.skippedCount,
+        skippedPayment: result.skippedPayment,
         errors: result.errors.slice(0, 10),
       },
-      message:
-        result.status === 'completed'
-          ? `Sinkronisasi selesai. ${result.newCount} data baru masuk ke antrian.`
-          : result.status === 'partial'
-            ? `Sinkronisasi sebagian berhasil. ${result.newCount} data baru, ${result.errors.length} error.`
-            : 'Sinkronisasi gagal.',
+      message,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Terjadi kesalahan.'
