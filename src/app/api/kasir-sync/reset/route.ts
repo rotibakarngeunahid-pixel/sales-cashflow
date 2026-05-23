@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { createServiceClient } from '@/lib/supabase/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,15 +8,17 @@ export const dynamic = 'force-dynamic'
 // Dipakai untuk bersihkan data lama sebelum filter dipasang
 // Hanya owner yang bisa melakukan ini
 //
-// CATATAN: Autentikasi pakai createClient() (session user),
-// tapi operasi delete pakai createServiceClient() (bypass RLS)
-// karena migration tidak mendefinisikan policy DELETE.
+// Requires RLS policy "sync_queue_delete_owner" di database:
+//   CREATE POLICY "sync_queue_delete_owner" ON kasir_sync_queue
+//     FOR DELETE USING (
+//       EXISTS (SELECT 1 FROM profiles
+//               WHERE profiles.id = auth.uid() AND profiles.role = 'owner')
+//     );
 // =============================================
 
 export async function DELETE() {
-  // 1. Validasi sesi — gunakan user client
-  const userClient = await createClient()
-  const { data: { user } } = await userClient.auth.getUser()
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
     return NextResponse.json(
@@ -26,7 +27,7 @@ export async function DELETE() {
     )
   }
 
-  const { data: profile } = await userClient
+  const { data: profile } = await supabase
     .from('profiles')
     .select('role')
     .eq('id', user.id)
@@ -38,9 +39,6 @@ export async function DELETE() {
       { status: 403 }
     )
   }
-
-  // 2. Eksekusi delete — gunakan service client (bypass RLS)
-  const supabase = createServiceClient()
 
   // Hapus semua item pending dari queue
   const { count: deletedQueue, error: queueErr } = await supabase
