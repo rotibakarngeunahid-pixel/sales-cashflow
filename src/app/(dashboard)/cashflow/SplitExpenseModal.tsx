@@ -103,7 +103,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
     }
 
     const allocList: { branch_id: string; amount: number }[] = []
-    for (const bid of checkedBranches) {
+    for (const bid of Array.from(checkedBranches)) {
       const amt = parseFloat(allocations[bid]?.replace(/\D/g, '') || '0') || 0
       if (amt <= 0) {
         setError(`Nominal cabang tidak boleh 0.`)
