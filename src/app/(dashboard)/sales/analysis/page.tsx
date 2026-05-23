@@ -418,8 +418,7 @@ export default function SalesAnalysisPage() {
             if (prevResult.error) throw prevResult.error
 
             // Agregasi kasir sync → synthetic SalesReport per tanggal+cabang
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            function aggregateKasir(items: any[]): SalesReport[] {
+            function aggregateKasir(items: { tanggal: string; branch_id: string | null; total_penjualan: number | null; metode_pembayaran: string | null; branch?: { id: string; name: string } | null }[]): SalesReport[] {
               const map = new Map<string, SalesReport>()
               for (const item of items ?? []) {
                 if (!item.branch_id) continue
