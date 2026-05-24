@@ -1,5 +1,5 @@
 import 'server-only'
-// v1.0.1
+// v1.0.2 — fix: str() case-insensitive + tambah alias payment_method + fix newCount hitung duplicate
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import {
@@ -240,10 +240,22 @@ async function fetchAllFromKasir(
 // Normalisasi Record dari API Kasir
 // =============================================
 
+/**
+ * Ambil string dari record dengan pencarian case-insensitive.
+ * Lebih robust dari lookup exact-match biasa — menangani variasi nama field
+ * yang dikembalikan oleh kasir API (misal 'Payment_Method' vs 'payment_method').
+ */
 function str(r: AnyRecord, ...keys: string[]): string {
   for (const k of keys) {
+    // Coba exact match dulu (lebih cepat)
     const v = r[k]
-    if (v !== undefined && v !== null) return String(v).trim()
+    if (v !== undefined && v !== null && v !== '') return String(v).trim()
+    // Fallback: case-insensitive search di semua keys record
+    const found = Object.keys(r).find((rk) => rk.toLowerCase() === k.toLowerCase())
+    if (found) {
+      const fv = r[found]
+      if (fv !== undefined && fv !== null && fv !== '') return String(fv).trim()
+    }
   }
   return ''
 }
@@ -476,7 +488,13 @@ export async function pullKasirToQueue(
       // ── FILTER METODE PEMBAYARAN ──────────────────────────────────────
       // Hanya izinkan Cash/Tunai dan QRIS. Abaikan ShopeeFood, GoFood,
       // GrabFood, transfer, voucher platform, dll.
-      const rawMetode = str(raw, 'metode_pembayaran', 'payment_method')
+      // Cek banyak alias nama field agar sinkron dengan import manual.
+      const rawMetode = str(
+        raw,
+        'metode_pembayaran', 'payment_method',
+        'payment', 'method', 'jenis_pembayaran', 'cara_bayar',
+        'tipe_bayar', 'payment_type',
+      )
       const paymentCategory = normalizePaymentMethod(rawMetode)
       if (!paymentCategory) {
         // Metode tidak dikenali sebagai Cash atau QRIS → lewati
@@ -507,9 +525,10 @@ export async function pullKasirToQueue(
         status: 'pending' as const,
       }
 
-      const { error } = await supabase
+      const { data: upsertData, error } = await supabase
         .from('kasir_sync_queue')
         .upsert(rowData, { onConflict: 'item_type,kasir_id', ignoreDuplicates: true })
+        .select('id')
 
       if (error) {
         // Duplikat diabaikan (unique constraint)
@@ -519,6 +538,9 @@ export async function pullKasirToQueue(
           errors.push(`Penjualan ID ${kasirId}: ${error.message}`)
           skippedCount++
         }
+      } else if (!upsertData || upsertData.length === 0) {
+        // ignoreDuplicates: true — konflik ditemukan, baris diabaikan (bukan error)
+        skippedCount++
       } else {
         newCount++
       }
@@ -567,9 +589,10 @@ export async function pullKasirToQueue(
         status: 'pending' as const,
       }
 
-      const { error } = await supabase
+      const { data: upsertData, error } = await supabase
         .from('kasir_sync_queue')
         .upsert(rowData, { onConflict: 'item_type,kasir_id', ignoreDuplicates: true })
+        .select('id')
 
       if (error) {
         if (error.code === '23505') {
@@ -578,6 +601,9 @@ export async function pullKasirToQueue(
           errors.push(`Kas Keluar ID ${kasirId}: ${error.message}`)
           skippedCount++
         }
+      } else if (!upsertData || upsertData.length === 0) {
+        // ignoreDuplicates: true — konflik ditemukan, baris diabaikan (bukan error)
+        skippedCount++
       } else {
         newCount++
       }
