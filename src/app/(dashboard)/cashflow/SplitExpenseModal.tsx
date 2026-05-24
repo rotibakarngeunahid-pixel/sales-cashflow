@@ -20,20 +20,29 @@ interface Allocation {
   amount: number
 }
 
+interface InitialValues {
+  date?: string
+  description?: string
+  category_id?: string
+  total?: number
+}
+
 interface Props {
   branches: Branch[]
   categories: Category[]
   onClose: () => void
-  onSuccess: () => void
+  onSuccess: () => void | Promise<void>
+  initialValues?: InitialValues
+  title?: string
 }
 
-export default function SplitExpenseModal({ branches, categories, onClose, onSuccess }: Props) {
+export default function SplitExpenseModal({ branches, categories, onClose, onSuccess, initialValues, title }: Props) {
   const today = new Date().toISOString().slice(0, 10)
 
-  const [date, setDate] = useState(today)
-  const [description, setDescription] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [total, setTotal] = useState('')
+  const [date, setDate] = useState(initialValues?.date ?? today)
+  const [description, setDescription] = useState(initialValues?.description ?? '')
+  const [categoryId, setCategoryId] = useState(initialValues?.category_id ?? '')
+  const [total, setTotal] = useState(initialValues?.total ? String(initialValues.total) : '')
   const [allocations, setAllocations] = useState<Record<string, string>>({})  // branch_id → amount string
   const [checkedBranches, setCheckedBranches] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
@@ -126,7 +135,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
       })
       const data = await res.json()
       if (data.success) {
-        onSuccess()
+        await onSuccess()
         onClose()
       } else {
         setError(data.message || 'Gagal menyimpan.')
@@ -155,7 +164,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <Scissors className="w-5 h-5 text-orange-600" />
-            <h2 className="text-base font-black text-slate-900">Biaya Bersama</h2>
+            <h2 className="text-base font-black text-slate-900">{title ?? 'Biaya Bersama'}</h2>
           </div>
           <button
             onClick={onClose}

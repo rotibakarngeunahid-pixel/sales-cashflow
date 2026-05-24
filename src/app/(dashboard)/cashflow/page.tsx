@@ -138,6 +138,7 @@ export default function CashflowPage() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [splitModalOpen, setSplitModalOpen] = useState(false)
+  const [splitSourceTx, setSplitSourceTx] = useState<CashflowTransaction | null>(null)
   const [editTx, setEditTx] = useState<CashflowTransaction | null>(null)
   const [voidTarget, setVoidTarget] = useState<CashflowTransaction | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null)
@@ -316,6 +317,11 @@ export default function CashflowPage() {
       amount: 0,
     })
     setModalOpen(true)
+  }
+
+  function openSplitFromTx(tx: CashflowTransaction) {
+    setSplitSourceTx(tx)
+    setSplitModalOpen(true)
   }
 
   function openEdit(tx: CashflowTransaction) {
@@ -684,6 +690,9 @@ export default function CashflowPage() {
                             <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
+                            <button onClick={() => openSplitFromTx(tx)} className="p-1.5 rounded-lg hover:bg-orange-50 text-gray-400 hover:text-orange-600" title="Bagi ke cabang">
+                              <Scissors className="w-3.5 h-3.5" />
+                            </button>
                             <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600" title="Void">
                               <XCircle className="w-3.5 h-3.5" />
                             </button>
@@ -742,7 +751,7 @@ export default function CashflowPage() {
                   <CashflowSourceLabel tx={tx} />
 
                   <div className="flex flex-wrap justify-end gap-2">
-                    {tx.source === 'manual' && tx.status === 'active' && (
+                    {tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order' && (
                       <>
                         <button
                           onClick={() => openEdit(tx)}
@@ -750,6 +759,13 @@ export default function CashflowPage() {
                           title="Edit"
                         >
                           <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => openSplitFromTx(tx)}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600"
+                          title="Bagi ke cabang"
+                        >
+                          <Scissors className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => setVoidTarget(tx)}
@@ -859,13 +875,46 @@ export default function CashflowPage() {
         <SplitExpenseModal
           branches={branches}
           categories={categories}
-          onClose={() => setSplitModalOpen(false)}
-          onSuccess={() => {
+          onClose={() => { setSplitModalOpen(false); setSplitSourceTx(null) }}
+          onSuccess={async () => {
+            // Void transaksi asal jika split dari transaksi existing
+            if (splitSourceTx) {
+              const supabase = createClient()
+              const { data: { session } } = await supabase.auth.getSession()
+              await supabase
+                .from('cashflow_transactions')
+                .update({ status: 'void' as const, updated_by: session?.user?.id ?? null })
+                .eq('id', splitSourceTx.id)
+              await supabase.from('audit_logs').insert({
+                table_name: 'cashflow_transactions',
+                record_id: splitSourceTx.id,
+                action: 'cashflow_voided',
+                old_data: { status: splitSourceTx.status } as Record<string, unknown>,
+                new_data: { status: 'void', reason: 'split_to_branches' } as Record<string, unknown>,
+                changed_by: session?.user?.id ?? null,
+                changed_at: new Date().toISOString(),
+              })
+            }
             invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
             load({ force: true })
             loadCashPositions({ force: true })
-            toastTimerRef('Biaya bersama berhasil disimpan.', 'success')
+            toastTimerRef(
+              splitSourceTx
+                ? 'Transaksi berhasil dibagi ke cabang-cabang. Transaksi asal divoid.'
+                : 'Biaya bersama berhasil disimpan.',
+              'success'
+            )
+            setSplitSourceTx(null)
           }}
+          initialValues={splitSourceTx ? {
+            date: splitSourceTx.transaction_date,
+            description: splitSourceTx.description || '',
+            category_id: splitSourceTx.category_id || undefined,
+            total: splitSourceTx.amount,
+          } : undefined}
+          title={splitSourceTx
+            ? `Bagi: ${splitSourceTx.description || splitSourceTx.category?.name || 'Transaksi'}`
+            : undefined}
         />
       )}
     </div>
