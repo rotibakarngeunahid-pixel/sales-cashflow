@@ -21,9 +21,12 @@ export async function POST(request: Request) {
   }
 
   let ids: string[]
+  // mappings: Record<queue_item_id, KasirExpenseMappingConfig> — opsional
+  let mappings: Record<string, unknown> | undefined
   try {
     const body = await request.json()
     ids = Array.isArray(body.ids) ? body.ids.filter((id: unknown) => typeof id === 'string') : []
+    mappings = body.mappings && typeof body.mappings === 'object' ? body.mappings : undefined
   } catch {
     return NextResponse.json(
       { success: false, message: 'Request body tidak valid.' },
@@ -46,7 +49,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await confirmQueueItems(supabase, ids, user.id)
+    const result = await confirmQueueItems(
+      supabase,
+      ids,
+      user.id,
+      mappings as Record<string, import('@/lib/kasir-import/shared').KasirExpenseMappingConfig> | undefined
+    )
 
     return NextResponse.json({
       success: result.failed === 0,

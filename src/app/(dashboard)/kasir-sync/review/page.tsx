@@ -1,13 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import {
   CheckCircle2, XCircle, Clock, RefreshCw, ArrowLeft,
   ShoppingCart, Wallet, AlertCircle, X,
   CheckSquare, Square, ChevronDown, MapPin,
+  BarChart2, ChevronUp, GitMerge, Plus, Trash2,
 } from 'lucide-react'
 import { formatRupiah, cn } from '@/lib/utils/format'
+import type {
+  KasirExpenseMappingConfig,
+  MappingTarget,
+} from '@/lib/kasir-import/shared'
 
 // =============================================
 // Types
@@ -54,7 +59,6 @@ export default function KasirSyncReviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Branches untuk picker cabang
   const [branches, setBranches] = useState<Branch[]>([])
 
   // Filters
@@ -67,6 +71,13 @@ export default function KasirSyncReviewPage() {
   // Selection
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
+  // Summary panel
+  const [showSummary, setShowSummary] = useState(true)
+
+  // Expense mappings: key = queue item id
+  const [mappings, setMappings] = useState<Record<string, KasirExpenseMappingConfig>>({})
+  const [mappingModal, setMappingModal] = useState<QueueItem | null>(null)
+
   // Reject modal
   const [rejectModal, setRejectModal] = useState<{
     ids: string[]
@@ -78,7 +89,7 @@ export default function KasirSyncReviewPage() {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null)
   const feedbackTimer = useRef<ReturnType<typeof setTimeout>>()
 
-  // ---- Load branches (sekali saat mount) ----
+  // ---- Load branches ----
   useEffect(() => {
     const supabase = createClient()
     supabase
@@ -105,7 +116,7 @@ export default function KasirSyncReviewPage() {
         .select('id, item_type, kasir_id, tanggal, waktu, cabang, branch_id, total_penjualan, metode_pembayaran, kasir_name, kategori, nominal, keterangan, dicatat_oleh, status, confirmed_at, rejected_at, reject_reason')
         .order('tanggal', { ascending: false })
         .order('waktu', { ascending: false })
-        .range(newPage * PAGE_SIZE, (newPage + 1) * PAGE_SIZE)  // +1 untuk deteksi has_more
+        .range(newPage * PAGE_SIZE, (newPage + 1) * PAGE_SIZE)
 
       if (statusFilter !== 'all') query = query.eq('status', statusFilter)
       if (typeFilter !== 'all') query = query.eq('item_type', typeFilter)
@@ -130,13 +141,11 @@ export default function KasirSyncReviewPage() {
     }
   }, [statusFilter, typeFilter, page])
 
-  // Reset & reload when filters change
   useEffect(() => {
     setPage(0)
     loadItems(true)
   }, [statusFilter, typeFilter])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load more when page increments
   useEffect(() => {
     if (page > 0) loadItems(false)
   }, [page])  // eslint-disable-line react-hooks/exhaustive-deps
@@ -157,7 +166,6 @@ export default function KasirSyncReviewPage() {
     const data = await res.json()
     if (data.success) {
       showFeedback('success', data.message)
-      // Optimistic update: set branch_id di semua item dengan cabang yang sama
       setItems((prev) =>
         prev.map((item) =>
           item.cabang === kasirName && item.status === 'pending'
@@ -169,6 +177,19 @@ export default function KasirSyncReviewPage() {
       showFeedback('error', data.message || 'Gagal menyimpan mapping.')
       throw new Error(data.message)
     }
+  }
+
+  // ---- Expense mapping ----
+  function handleSaveMapping(itemId: string, config: KasirExpenseMappingConfig) {
+    setMappings((prev) => ({ ...prev, [itemId]: config }))
+  }
+
+  function handleClearMapping(itemId: string) {
+    setMappings((prev) => {
+      const next = { ...prev }
+      delete next[itemId]
+      return next
+    })
   }
 
   // ---- Selection helpers ----
@@ -199,7 +220,7 @@ export default function KasirSyncReviewPage() {
       const res = await fetch('/api/kasir-sync/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, mappings }),
       })
       const data = await res.json()
       if (data.success || data.confirmed > 0) {
@@ -242,18 +263,70 @@ export default function KasirSyncReviewPage() {
     }
   }
 
+  // ---- Summary data ----
+  const summaryData = useMemo(() => {
+    const pendingSales = items.filter((i) => i.item_type === 'penjualan' && i.status === 'pending')
+    const pendingExp = items.filter((i) => i.item_type === 'kas_keluar' && i.status === 'pending')
+
+    // Penjualan by branch
+    const salesMap = new Map<string, { tunai: number; qris: number }>()
+    for (const item of pendingSales) {
+      const key = item.cabang || 'Tidak Diketahui'
+      const curr = salesMap.get(key) ?? { tunai: 0, qris: 0 }
+      const metode = (item.metode_pembayaran ?? '').toLowerCase()
+      if (metode === 'tunai' || metode === 'cash') curr.tunai += item.total_penjualan ?? 0
+      else if (metode === 'qris') curr.qris += item.total_penjualan ?? 0
+      salesMap.set(key, curr)
+    }
+
+    // Kas keluar by branch → grouped kategori
+    const expMap = new Map<string, Array<{ kategori: string; nominal: number; isKurir: boolean }>>()
+    for (const item of pendingExp) {
+      const key = item.cabang || 'Tidak Diketahui'
+      const list = expMap.get(key) ?? []
+      const kategori = item.kategori || 'Lainnya'
+      const isKurir = kategori.toLowerCase().includes('kurir')
+      list.push({ kategori, nominal: item.nominal ?? 0, isKurir })
+      expMap.set(key, list)
+    }
+
+    return {
+      salesByBranch: Array.from(salesMap.entries()).map(([branch, v]) => ({
+        branch, tunai: v.tunai, qris: v.qris, total: v.tunai + v.qris,
+      })).sort((a, b) => b.total - a.total),
+      expByBranch: Array.from(expMap.entries()).map(([branch, list]) => ({
+        branch,
+        total: list.reduce((s, x) => s + x.nominal, 0),
+        items: list,
+        hasKurir: list.some((x) => x.isKurir),
+      })).sort((a, b) => b.total - a.total),
+      totalPenjualan: pendingSales.reduce((s, i) => s + (i.total_penjualan ?? 0), 0),
+      totalKasKeluar: pendingExp.reduce((s, i) => s + (i.nominal ?? 0), 0),
+      pendingSalesCount: pendingSales.length,
+      pendingExpCount: pendingExp.length,
+    }
+  }, [items])
+
   // ---- Filter counts ----
   const selectedPending = Array.from(selected).filter((id) =>
     items.find((i) => i.id === id && i.status === 'pending')
   )
-
-  // Pending items yang bisa dikonfirmasi (sudah punya branch_id)
   const confirmableSelected = selectedPending.filter((id) =>
     items.find((i) => i.id === id && i.branch_id !== null)
   )
   const unresolvableSelected = selectedPending.filter((id) =>
     items.find((i) => i.id === id && i.branch_id === null)
   )
+
+  // Kas keluar pending yang perlu mapping kurir (belum di-mapping)
+  const unmappedKurirCount = pendingItems.filter((i) => {
+    if (i.item_type !== 'kas_keluar') return false
+    const kat = (i.kategori ?? '').toLowerCase()
+    return kat.includes('kurir') && !mappings[i.id]
+  }).length
+
+  const hasPendingSummary =
+    summaryData.pendingSalesCount > 0 || summaryData.pendingExpCount > 0
 
   return (
     <div className="flex flex-col gap-4 p-4 md:p-6 max-w-6xl mx-auto">
@@ -292,18 +365,133 @@ export default function KasirSyncReviewPage() {
               : 'bg-red-50 border-red-200 text-red-800'
           )}
         >
-          {feedback.type === 'success' ? (
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-          ) : (
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          )}
+          {feedback.type === 'success'
+            ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+            : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
           {feedback.msg}
+        </div>
+      )}
+
+      {/* ── Summary Panel ── */}
+      {hasPendingSummary && (
+        <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+          <button
+            onClick={() => setShowSummary((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-rbn-red" />
+              <span className="text-sm font-bold text-slate-800">Ringkasan Antrian Pending</span>
+              <span className="text-xs bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full">
+                {summaryData.pendingSalesCount + summaryData.pendingExpCount} item
+              </span>
+              {unmappedKurirCount > 0 && (
+                <span className="text-xs bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <GitMerge className="w-3 h-3" />
+                  {unmappedKurirCount} kurir belum di-mapping
+                </span>
+              )}
+            </div>
+            {showSummary
+              ? <ChevronUp className="w-4 h-4 text-slate-400" />
+              : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          </button>
+
+          {showSummary && (
+            <div className="border-t border-slate-100 p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+
+              {/* Penjualan */}
+              {summaryData.pendingSalesCount > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <ShoppingCart className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      Penjualan — {formatRupiah(summaryData.totalPenjualan)}
+                    </span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-slate-400 uppercase tracking-wide">
+                        <th className="text-left pb-1 font-semibold">Outlet</th>
+                        <th className="text-right pb-1 font-semibold">Tunai</th>
+                        <th className="text-right pb-1 font-semibold">QRIS</th>
+                        <th className="text-right pb-1 font-semibold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {summaryData.salesByBranch.map((row) => (
+                        <tr key={row.branch}>
+                          <td className="py-1 text-slate-700 font-medium truncate max-w-[120px]" title={row.branch}>
+                            {row.branch}
+                          </td>
+                          <td className="py-1 text-right text-slate-600 tabular-nums">
+                            {row.tunai > 0 ? formatRupiah(row.tunai) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="py-1 text-right text-slate-600 tabular-nums">
+                            {row.qris > 0 ? formatRupiah(row.qris) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="py-1 text-right font-bold text-emerald-700 tabular-nums">
+                            {formatRupiah(row.total)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Kas Keluar */}
+              {summaryData.pendingExpCount > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-2">
+                    <Wallet className="w-3.5 h-3.5 text-orange-600" />
+                    <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                      Kas Keluar — {formatRupiah(summaryData.totalKasKeluar)}
+                    </span>
+                  </div>
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-slate-400 uppercase tracking-wide">
+                        <th className="text-left pb-1 font-semibold">Outlet</th>
+                        <th className="text-left pb-1 font-semibold">Kategori</th>
+                        <th className="text-right pb-1 font-semibold">Nominal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {summaryData.expByBranch.flatMap((row) =>
+                        row.items.map((exp, idx) => (
+                          <tr key={`${row.branch}-${idx}`}>
+                            <td className="py-1 text-slate-600 truncate max-w-[100px]" title={row.branch}>
+                              {idx === 0 ? row.branch : ''}
+                            </td>
+                            <td className="py-1">
+                              <span className={cn(
+                                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-semibold',
+                                exp.isKurir
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'bg-slate-100 text-slate-600'
+                              )}>
+                                {exp.isKurir && <GitMerge className="w-2.5 h-2.5" />}
+                                {exp.kategori}
+                              </span>
+                            </td>
+                            <td className="py-1 text-right font-bold text-red-600 tabular-nums">
+                              {formatRupiah(exp.nominal)}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
-        {/* Status filter */}
         <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm font-semibold">
           {(
             [
@@ -329,7 +517,6 @@ export default function KasirSyncReviewPage() {
           ))}
         </div>
 
-        {/* Type filter */}
         <div className="flex rounded-xl border border-slate-200 overflow-hidden text-sm font-semibold">
           {(
             [
@@ -393,9 +580,7 @@ export default function KasirSyncReviewPage() {
                 </button>
               )}
               <button
-                onClick={() =>
-                  setRejectModal({ ids: selectedPending, reason: '', loading: false })
-                }
+                onClick={() => setRejectModal({ ids: selectedPending, reason: '', loading: false })}
                 disabled={loading}
                 className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
               >
@@ -470,9 +655,10 @@ export default function KasirSyncReviewPage() {
                     isSelected={selected.has(item.id)}
                     onToggle={() => toggleSelect(item.id)}
                     onConfirm={() => handleConfirm([item.id])}
-                    onReject={() =>
-                      setRejectModal({ ids: [item.id], reason: '', loading: false })
-                    }
+                    onReject={() => setRejectModal({ ids: [item.id], reason: '', loading: false })}
+                    onOpenMapping={() => setMappingModal(item)}
+                    mapping={mappings[item.id]}
+                    onClearMapping={() => handleClearMapping(item.id)}
                     disabled={loading}
                   />
                 ))}
@@ -481,7 +667,6 @@ export default function KasirSyncReviewPage() {
           </div>
         )}
 
-        {/* Load more */}
         {hasMore && (
           <div className="px-4 py-3 border-t border-slate-100 text-center">
             <button
@@ -510,24 +695,19 @@ export default function KasirSyncReviewPage() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-
             <p className="text-sm text-slate-600 mb-4">
               Item yang ditolak tidak akan masuk ke cashflow. Alasan penolakan bersifat opsional.
             </p>
-
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
               Alasan (opsional)
             </label>
             <textarea
               value={rejectModal.reason}
-              onChange={(e) =>
-                setRejectModal((prev) => prev ? { ...prev, reason: e.target.value } : null)
-              }
+              onChange={(e) => setRejectModal((prev) => prev ? { ...prev, reason: e.target.value } : null)}
               className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-300 focus:border-red-400"
               rows={3}
               placeholder="Contoh: Data sudah diinput manual, duplikat dari periode sebelumnya…"
             />
-
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => setRejectModal(null)}
@@ -547,6 +727,248 @@ export default function KasirSyncReviewPage() {
           </div>
         </div>
       )}
+
+      {/* Expense Mapping Modal */}
+      {mappingModal && (
+        <ExpenseMappingModal
+          item={mappingModal}
+          branches={branches}
+          initialMapping={mappings[mappingModal.id]}
+          onSave={(config) => {
+            handleSaveMapping(mappingModal.id, config)
+            setMappingModal(null)
+          }}
+          onClose={() => setMappingModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// =============================================
+// ExpenseMappingModal — Mapping sebelum konfirmasi
+// =============================================
+
+function ExpenseMappingModal({
+  item,
+  branches,
+  initialMapping,
+  onSave,
+  onClose,
+}: {
+  item: QueueItem
+  branches: Branch[]
+  initialMapping?: KasirExpenseMappingConfig
+  onSave: (config: KasirExpenseMappingConfig) => void
+  onClose: () => void
+}) {
+  const totalAmount = item.nominal ?? 0
+
+  const defaultTargets = (): MappingTarget[] => {
+    if (initialMapping?.targets.length) return initialMapping.targets
+    if (item.branch_id) {
+      const br = branches.find((b) => b.id === item.branch_id)
+      return [{ branchId: item.branch_id, branchName: br?.name ?? item.cabang, amount: totalAmount }]
+    }
+    return [{ branchId: '', branchName: '', amount: totalAmount }]
+  }
+
+  const [targets, setTargets] = useState<MappingTarget[]>(defaultTargets)
+
+  const totalMapped = targets.reduce((s, t) => s + (t.amount || 0), 0)
+  const remaining = totalAmount - totalMapped
+  const isValid =
+    targets.length > 0 &&
+    targets.every((t) => t.branchId && (t.amount ?? 0) > 0) &&
+    Math.abs(remaining) <= 1
+
+  function addTarget() {
+    setTargets((prev) => [
+      ...prev,
+      { branchId: '', branchName: '', amount: Math.max(0, remaining) },
+    ])
+  }
+
+  function removeTarget(idx: number) {
+    setTargets((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  function updateBranch(idx: number, branchId: string) {
+    const br = branches.find((b) => b.id === branchId)
+    setTargets((prev) =>
+      prev.map((t, i) =>
+        i === idx ? { ...t, branchId, branchName: br?.name ?? '' } : t
+      )
+    )
+  }
+
+  function updateAmount(idx: number, raw: string) {
+    const val = parseInt(raw.replace(/\D/g, ''), 10) || 0
+    setTargets((prev) => prev.map((t, i) => i === idx ? { ...t, amount: val } : t))
+  }
+
+  function splitEqual() {
+    if (targets.length === 0) return
+    const n = targets.length
+    const base = Math.floor(totalAmount / n)
+    const rem = totalAmount - base * n
+    setTargets((prev) =>
+      prev.map((t, i) => ({ ...t, amount: base + (i < rem ? 1 : 0) }))
+    )
+  }
+
+  function handleSave() {
+    const isSplit = targets.length > 1
+    const isRemap = targets.length === 1 && targets[0].branchId !== (item.branch_id ?? '')
+    const mode = isSplit ? 'split_manual' : isRemap ? 'remap' : 'original'
+    onSave({ mode, targets })
+  }
+
+  const isKurir = (item.kategori ?? '').toLowerCase().includes('kurir')
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <GitMerge className="w-4 h-4 text-rbn-red" />
+            <h3 className="text-base font-black text-slate-900">Mapping Pengeluaran</h3>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Info item */}
+        <div className={cn(
+          'rounded-xl px-4 py-3 mb-5 border text-sm',
+          isKurir
+            ? 'bg-orange-50 border-orange-200'
+            : 'bg-slate-50 border-slate-200'
+        )}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-bold text-slate-800">{item.kategori || 'Kas Keluar'}</p>
+              <p className="text-slate-500 text-xs mt-0.5">
+                Cabang asli: <span className="font-semibold">{item.cabang}</span>
+                {item.keterangan && <> — {item.keterangan}</>}
+              </p>
+            </div>
+            <p className="text-lg font-black text-red-600">{formatRupiah(totalAmount)}</p>
+          </div>
+          {isKurir && (
+            <p className="text-orange-700 text-xs mt-2 font-medium flex items-center gap-1">
+              <GitMerge className="w-3 h-3" />
+              Biaya kurir biasanya dibagi ke beberapa cabang. Atur mapping di bawah.
+            </p>
+          )}
+        </div>
+
+        {/* Targets */}
+        <div className="space-y-2 mb-4">
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+              Target Cabang
+            </p>
+            {targets.length > 1 && (
+              <button
+                onClick={splitEqual}
+                className="text-xs text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+              >
+                <GitMerge className="w-3 h-3" />
+                Bagi Rata
+              </button>
+            )}
+          </div>
+
+          {targets.map((target, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              {/* Branch selector */}
+              <select
+                value={target.branchId}
+                onChange={(e) => updateBranch(idx, e.target.value)}
+                className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-rbn-red/30 focus:border-rbn-red"
+              >
+                <option value="">Pilih cabang…</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+
+              {/* Amount input */}
+              <div className="relative w-36">
+                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-semibold">
+                  Rp
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={target.amount > 0 ? target.amount.toLocaleString('id-ID') : ''}
+                  onChange={(e) => updateAmount(idx, e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg pl-7 pr-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-rbn-red/30 focus:border-rbn-red tabular-nums"
+                  placeholder="0"
+                />
+              </div>
+
+              {/* Remove */}
+              {targets.length > 1 && (
+                <button
+                  onClick={() => removeTarget(idx)}
+                  className="p-1.5 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors flex-shrink-0"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Add target */}
+        <button
+          onClick={addTarget}
+          className="flex items-center gap-1.5 text-sm font-semibold text-rbn-red hover:text-red-700 mb-5"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Tambah Cabang
+        </button>
+
+        {/* Validation */}
+        <div className={cn(
+          'rounded-xl px-3 py-2 text-xs font-semibold mb-5 flex items-center justify-between',
+          isValid
+            ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+            : 'bg-amber-50 border border-amber-200 text-amber-700'
+        )}>
+          <span>
+            Total mapping: <strong>{formatRupiah(totalMapped)}</strong>
+            {' '}/ Nominal: <strong>{formatRupiah(totalAmount)}</strong>
+          </span>
+          {!isValid && Math.abs(remaining) > 1 && (
+            <span>
+              {remaining > 0 ? `Kurang ${formatRupiah(remaining)}` : `Lebih ${formatRupiah(-remaining)}`}
+            </span>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-xl text-sm font-bold border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            Batal
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!isValid}
+            className="flex-1 px-4 py-2 rounded-xl text-sm font-bold bg-rbn-red text-white hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            Simpan Mapping
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -564,6 +986,9 @@ function QueueRow({
   onToggle,
   onConfirm,
   onReject,
+  onOpenMapping,
+  mapping,
+  onClearMapping,
   disabled,
 }: {
   item: QueueItem
@@ -574,11 +999,18 @@ function QueueRow({
   onToggle: () => void
   onConfirm: () => void
   onReject: () => void
+  onOpenMapping: () => void
+  mapping?: KasirExpenseMappingConfig
+  onClearMapping: () => void
   disabled: boolean
 }) {
   const isPenjualan = item.item_type === 'penjualan'
   const amount = isPenjualan ? (item.total_penjualan ?? 0) : (item.nominal ?? 0)
-  const noBranch = !item.branch_id
+  const noBranch = !item.branch_id && !mapping
+  const isKasKeluar = item.item_type === 'kas_keluar'
+  const isKurir = isKasKeluar && (item.kategori ?? '').toLowerCase().includes('kurir')
+  // Kurir perlu mapping — tampilkan peringatan jika belum di-mapping
+  const needsMapping = isKurir && !mapping && item.status === 'pending'
 
   return (
     <tr
@@ -616,26 +1048,20 @@ function QueueRow({
               : 'bg-orange-100 text-orange-700'
           )}
         >
-          {isPenjualan ? (
-            <ShoppingCart className="w-3 h-3" />
-          ) : (
-            <Wallet className="w-3 h-3" />
-          )}
+          {isPenjualan ? <ShoppingCart className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
           {isPenjualan ? 'Penjualan' : 'Kas Keluar'}
         </span>
       </td>
 
       <td className="px-4 py-3">
         <p className="font-medium text-slate-800">{item.cabang}</p>
-        {noBranch && item.status === 'pending' ? (
-          // Picker inline — hanya untuk item pending
+        {!item.branch_id && !mapping && item.status === 'pending' ? (
           <BranchPicker
             kasirName={item.cabang}
             branches={branches}
             onMap={(branchId) => onMapBranch(item.cabang, branchId)}
           />
-        ) : noBranch ? (
-          // Sudah confirmed/rejected tapi cabang tidak dikenali (data lama)
+        ) : !item.branch_id && !mapping ? (
           <p className="text-xs text-amber-600 font-semibold mt-0.5 flex items-center gap-1">
             <AlertCircle className="w-3 h-3" />
             Cabang tidak dikenali
@@ -657,7 +1083,15 @@ function QueueRow({
           </>
         ) : (
           <>
-            <p className="text-slate-700 font-medium">{item.kategori || '—'}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-slate-700 font-medium">{item.kategori || '—'}</p>
+              {isKurir && (
+                <span className="text-xs bg-orange-100 text-orange-700 font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                  <GitMerge className="w-2.5 h-2.5" />
+                  Kurir
+                </span>
+              )}
+            </div>
             {item.keterangan && (
               <p className="text-xs text-slate-400 truncate max-w-[200px]" title={item.keterangan}>
                 {item.keterangan}
@@ -665,6 +1099,51 @@ function QueueRow({
             )}
             {item.dicatat_oleh && (
               <p className="text-xs text-slate-400">Oleh: {item.dicatat_oleh}</p>
+            )}
+            {/* Mapping badge */}
+            {isKasKeluar && item.status === 'pending' && (
+              <div className="mt-1">
+                {mapping ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs bg-emerald-100 text-emerald-700 font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle2 className="w-2.5 h-2.5" />
+                      {mapping.targets.length > 1
+                        ? `Dibagi ke ${mapping.targets.length} cabang`
+                        : mapping.mode === 'remap'
+                          ? `→ ${mapping.targets[0]?.branchName}`
+                          : 'Sesuai cabang'}
+                    </span>
+                    <button
+                      onClick={onOpenMapping}
+                      className="text-xs text-slate-400 hover:text-slate-600 font-semibold"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={onClearMapping}
+                      className="text-xs text-red-400 hover:text-red-600"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : needsMapping ? (
+                  <button
+                    onClick={onOpenMapping}
+                    className="text-xs text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-1"
+                  >
+                    <GitMerge className="w-3 h-3" />
+                    Set mapping cabang
+                  </button>
+                ) : (
+                  <button
+                    onClick={onOpenMapping}
+                    className="text-xs text-slate-400 hover:text-slate-600 font-semibold flex items-center gap-1"
+                  >
+                    <GitMerge className="w-3 h-3" />
+                    Mapping
+                  </button>
+                )}
+              </div>
             )}
           </>
         )}
@@ -677,6 +1156,16 @@ function QueueRow({
         )}>
           {isPenjualan ? '+' : '-'}{formatRupiah(amount)}
         </p>
+        {/* Tampilkan breakdown mapping jika split */}
+        {mapping && mapping.targets.length > 1 && (
+          <div className="text-right">
+            {mapping.targets.map((t, i) => (
+              <p key={i} className="text-xs text-slate-400 tabular-nums">
+                {t.branchName.split(' - ').pop()}: {formatRupiah(t.amount)}
+              </p>
+            ))}
+          </div>
+        )}
       </td>
 
       <td className="px-4 py-3">
@@ -702,8 +1191,8 @@ function QueueRow({
             <div className="flex items-center gap-1.5">
               <button
                 onClick={onConfirm}
-                disabled={disabled || noBranch}
-                title={noBranch ? 'Pilih cabang dulu sebelum konfirmasi' : 'Konfirmasi'}
+                disabled={disabled || (noBranch)}
+                title={noBranch ? 'Pilih cabang atau set mapping dulu' : 'Konfirmasi'}
                 className={cn(
                   'p-1.5 rounded-lg text-xs font-bold transition-colors',
                   noBranch
@@ -730,7 +1219,7 @@ function QueueRow({
 }
 
 // =============================================
-// BranchPicker — Dropdown pemilih cabang inline
+// BranchPicker
 // =============================================
 
 function BranchPicker({
@@ -747,7 +1236,6 @@ function BranchPicker({
   const [saved, setSaved] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Close on click outside
   useEffect(() => {
     if (!open) return
     function handler(e: MouseEvent) {
@@ -765,14 +1253,11 @@ function BranchPicker({
     try {
       await onMap(branchId)
       setSaved(true)
-    } catch {
-      // Error sudah ditampilkan di parent via showFeedback
-    } finally {
-      setSaving(false)
-    }
+    } catch { /* Error ditampilkan di parent */ }
+    finally { setSaving(false) }
   }
 
-  if (saved) return null  // Sudah di-map — hilang sendiri
+  if (saved) return null
 
   return (
     <div className="relative mt-0.5" ref={ref}>
@@ -781,16 +1266,10 @@ function BranchPicker({
         disabled={saving || branches.length === 0}
         className={cn(
           'flex items-center gap-1 text-xs font-semibold transition-colors',
-          saving
-            ? 'text-slate-400 cursor-wait'
-            : 'text-amber-600 hover:text-amber-800'
+          saving ? 'text-slate-400 cursor-wait' : 'text-amber-600 hover:text-amber-800'
         )}
       >
-        {saving ? (
-          <RefreshCw className="w-3 h-3 animate-spin" />
-        ) : (
-          <MapPin className="w-3 h-3" />
-        )}
+        {saving ? <RefreshCw className="w-3 h-3 animate-spin" /> : <MapPin className="w-3 h-3" />}
         {saving ? 'Menyimpan…' : 'Pilih cabang'}
         {!saving && <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />}
       </button>
@@ -810,12 +1289,6 @@ function BranchPicker({
               {b.name}
             </button>
           ))}
-        </div>
-      )}
-
-      {branches.length === 0 && open && (
-        <div className="absolute left-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-xl shadow-lg w-48 p-3">
-          <p className="text-xs text-slate-500">Memuat daftar cabang…</p>
         </div>
       )}
     </div>

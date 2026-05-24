@@ -1,10 +1,12 @@
 import 'server-only'
-// v1.0.2 — fix: str() case-insensitive + tambah alias payment_method + fix newCount hitung duplicate
+// v1.1.0 — tambah: support mapping/split kas_keluar saat konfirmasi
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
 import {
   normalizeBranchName,
   normalizePaymentMethod,
+  validateMappingTargets,
+  type KasirExpenseMappingConfig,
 } from '@/lib/kasir-import/shared'
 
 type Supabase = SupabaseClient<Database>
@@ -658,7 +660,9 @@ export async function pullKasirToQueue(
 export async function confirmQueueItems(
   supabase: Supabase,
   ids: string[],
-  userId: string
+  userId: string,
+  // mapping per queue item ID — opsional, khusus untuk kas_keluar dengan split/remap
+  mappings?: Record<string, KasirExpenseMappingConfig>
 ): Promise<ConfirmResult> {
   if (ids.length === 0) return { confirmed: 0, failed: 0, errors: [] }
 
@@ -683,7 +687,8 @@ export async function confirmQueueItems(
       if (item.item_type === 'penjualan') {
         await confirmPenjualan(supabase, item as SyncQueueItem, userId, categories)
       } else {
-        await confirmKasKeluar(supabase, item as SyncQueueItem, userId, categories)
+        const mapping = mappings?.[item.id]
+        await confirmKasKeluar(supabase, item as SyncQueueItem, userId, categories, mapping)
       }
       confirmed++
     } catch (err) {
@@ -833,121 +838,133 @@ async function confirmKasKeluar(
   supabase: Supabase,
   item: SyncQueueItem,
   userId: string,
-  categories: LocalCategory[]
+  categories: LocalCategory[],
+  mapping?: KasirExpenseMappingConfig
 ): Promise<void> {
   const amount = item.nominal ?? 0
   if (amount <= 0) throw new Error('Nominal kas keluar tidak valid.')
-  if (!item.branch_id) throw new Error('Cabang tidak cocok — tidak bisa dikonfirmasi.')
 
+  // ── Tentukan target cabang berdasarkan mapping ──────────────────────
+  let targets: Array<{ branchId: string; branchName: string; amount: number }>
+
+  if (mapping && mapping.targets.length > 0) {
+    const validationError = validateMappingTargets(mapping.targets, amount)
+    if (validationError) throw new Error(validationError)
+    targets = mapping.targets
+  } else {
+    // Fallback: gunakan cabang yang sudah di-match
+    if (!item.branch_id) throw new Error('Cabang tidak cocok — tidak bisa dikonfirmasi.')
+    targets = [{ branchId: item.branch_id, branchName: item.cabang, amount }]
+  }
+  // ────────────────────────────────────────────────────────────────────
+
+  const isSplit = targets.length > 1
+  const baseImportKey = makeSyncExpenseKey(item.cabang, item.kasir_id)
   const categoryId = item.kategori
     ? matchCategoryByKasirName(categories, item.kategori) ??
       findCategory(categories, 'cash_out', ['Lainnya'])
     : findCategory(categories, 'cash_out', ['Lainnya'])
 
-  const importKey = makeSyncExpenseKey(item.cabang, item.kasir_id)
-  const description = [
-    item.kategori || 'Kas Keluar',
-    item.cabang,
-    item.tanggal,
-    item.keterangan ? `- ${item.keterangan}` : '',
-  ]
-    .filter(Boolean)
-    .join(' - ')
+  let lastInsertedId: string | null = null
 
-  const payload = {
-    transaction_date: item.tanggal,
-    branch_id: item.branch_id,
-    transaction_type: 'cash_out' as const,
-    category_id: categoryId,
-    description,
-    cash_in: 0,
-    cash_out: amount,
-    amount,
-    source: 'kasir_expenses' as const,
-    source_id: null,
-    import_key: importKey,
-    source_label: 'Sinkronisasi Otomatis Kasir',
-    source_metadata: {
-      ...((item.raw_data as AnyRecord) ?? {}),
-      kasir_id: item.kasir_id,
-      sync_queue_id: item.id,
-      confirmed_by: userId,
-      confirmed_at: new Date().toISOString(),
-    } as AnyRecord,
-    status: 'active' as const,
-    created_by: userId,
-    updated_by: userId,
-  }
+  for (const target of targets) {
+    const importKey = isSplit
+      ? `${baseImportKey}:split:${target.branchId}`
+      : baseImportKey
 
-  const { data: existing } = await supabase
-    .from('cashflow_transactions')
-    .select('id')
-    .eq('import_key', importKey)
-    .maybeSingle()
+    const descParts = [
+      item.kategori || 'Kas Keluar',
+      isSplit ? `${target.branchName} (dibagi)` : item.cabang,
+      item.tanggal,
+      item.keterangan ? `- ${item.keterangan}` : '',
+    ]
+    const description = descParts.filter(Boolean).join(' - ')
 
-  if (existing) {
-    await supabase
-      .from('kasir_sync_queue')
-      .update({
-        status: 'confirmed',
-        confirmed_at: new Date().toISOString(),
+    const payload = {
+      transaction_date: item.tanggal,
+      branch_id: target.branchId,
+      transaction_type: 'cash_out' as const,
+      category_id: categoryId,
+      description,
+      cash_in: 0,
+      cash_out: target.amount,
+      amount: target.amount,
+      source: 'kasir_expenses' as const,
+      source_id: null,
+      import_key: importKey,
+      source_label: 'Sinkronisasi Otomatis Kasir',
+      source_metadata: {
+        ...((item.raw_data as AnyRecord) ?? {}),
+        kasir_id: item.kasir_id,
+        sync_queue_id: item.id,
         confirmed_by: userId,
-        cashflow_transaction_id: existing.id,
-      })
-      .eq('id', item.id)
-    return
-  }
-
-  const { data: inserted, error } = await supabase
-    .from('cashflow_transactions')
-    .insert(payload)
-    .select('id')
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      const { data: dup } = await supabase
-        .from('cashflow_transactions')
-        .select('id')
-        .eq('import_key', importKey)
-        .maybeSingle()
-      if (dup) {
-        await supabase
-          .from('kasir_sync_queue')
-          .update({
-            status: 'confirmed',
-            confirmed_at: new Date().toISOString(),
-            confirmed_by: userId,
-            cashflow_transaction_id: dup.id,
-          })
-          .eq('id', item.id)
-        return
-      }
+        confirmed_at: new Date().toISOString(),
+        is_split: isSplit,
+        split_count: targets.length,
+        original_branch: item.cabang,
+        original_amount: amount,
+        mapping_mode: mapping?.mode ?? 'original',
+      } as AnyRecord,
+      status: 'active' as const,
+      created_by: userId,
+      updated_by: userId,
     }
-    throw new Error(error.message)
+
+    // Dedup per import_key
+    const { data: existing } = await supabase
+      .from('cashflow_transactions')
+      .select('id')
+      .eq('import_key', importKey)
+      .maybeSingle()
+
+    if (existing) {
+      lastInsertedId = existing.id
+      continue  // Sudah ada — lewati
+    }
+
+    const { data: inserted, error } = await supabase
+      .from('cashflow_transactions')
+      .insert(payload)
+      .select('id')
+      .single()
+
+    if (error) {
+      if (error.code === '23505') {
+        const { data: dup } = await supabase
+          .from('cashflow_transactions')
+          .select('id')
+          .eq('import_key', importKey)
+          .maybeSingle()
+        if (dup) { lastInsertedId = dup.id; continue }
+      }
+      throw new Error(error.message)
+    }
+
+    lastInsertedId = inserted?.id ?? null
+
+    if (inserted) {
+      await supabase.from('audit_logs').insert({
+        table_name: 'cashflow_transactions',
+        record_id: inserted.id,
+        action: 'kasir_sync_confirmed',
+        old_data: null,
+        new_data: payload as unknown as AnyRecord,
+        changed_by: userId,
+        changed_at: new Date().toISOString(),
+      }).then(() => {})
+    }
   }
 
+  // Update status antrian
   await supabase
     .from('kasir_sync_queue')
     .update({
       status: 'confirmed',
       confirmed_at: new Date().toISOString(),
       confirmed_by: userId,
-      cashflow_transaction_id: inserted?.id ?? null,
+      cashflow_transaction_id: lastInsertedId,
     })
     .eq('id', item.id)
-
-  if (inserted) {
-    await supabase.from('audit_logs').insert({
-      table_name: 'cashflow_transactions',
-      record_id: inserted.id,
-      action: 'kasir_sync_confirmed',
-      old_data: null,
-      new_data: payload as unknown as AnyRecord,
-      changed_by: userId,
-      changed_at: new Date().toISOString(),
-    }).then(() => {})
-  }
 }
 
 // =============================================
