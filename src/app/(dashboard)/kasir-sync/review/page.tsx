@@ -6,7 +6,7 @@ import {
   CheckCircle2, XCircle, Clock, RefreshCw, ArrowLeft,
   ShoppingCart, Wallet, AlertCircle, X,
   CheckSquare, Square, ChevronDown, MapPin,
-  BarChart2, ChevronUp, GitMerge, Plus, Trash2,
+  BarChart2, ChevronUp, GitMerge, Plus, Trash2, Calendar,
 } from 'lucide-react'
 import { formatRupiah, cn } from '@/lib/utils/format'
 import type {
@@ -280,15 +280,21 @@ export default function KasirSyncReviewPage() {
     }
 
     // Kas keluar by branch → grouped kategori
-    const expMap = new Map<string, Array<{ kategori: string; nominal: number; isKurir: boolean }>>()
+    const expMap = new Map<string, Array<{ id: string; kategori: string; nominal: number; isKurir: boolean }>>()
     for (const item of pendingExp) {
       const key = item.cabang || 'Tidak Diketahui'
       const list = expMap.get(key) ?? []
       const kategori = item.kategori || 'Lainnya'
       const isKurir = kategori.toLowerCase().includes('kurir')
-      list.push({ kategori, nominal: item.nominal ?? 0, isKurir })
+      list.push({ id: item.id, kategori, nominal: item.nominal ?? 0, isKurir })
       expMap.set(key, list)
     }
+
+    // Rentang tanggal dari semua item pending
+    const allPending = [...pendingSales, ...pendingExp]
+    const uniqueDates = [...new Set(allPending.map((i) => i.tanggal).filter(Boolean))].sort()
+    const dateFrom = uniqueDates[0] ?? null
+    const dateTo = uniqueDates[uniqueDates.length - 1] ?? null
 
     return {
       salesByBranch: Array.from(salesMap.entries()).map(([branch, v]) => ({
@@ -304,6 +310,9 @@ export default function KasirSyncReviewPage() {
       totalKasKeluar: pendingExp.reduce((s, i) => s + (i.nominal ?? 0), 0),
       pendingSalesCount: pendingSales.length,
       pendingExpCount: pendingExp.length,
+      dateFrom,
+      dateTo,
+      uniqueDates,
     }
   }, [items])
 
@@ -379,12 +388,20 @@ export default function KasirSyncReviewPage() {
             onClick={() => setShowSummary((v) => !v)}
             className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <BarChart2 className="w-4 h-4 text-rbn-red" />
               <span className="text-sm font-bold text-slate-800">Ringkasan Antrian Pending</span>
               <span className="text-xs bg-amber-100 text-amber-700 font-bold px-2 py-0.5 rounded-full">
                 {summaryData.pendingSalesCount + summaryData.pendingExpCount} item
               </span>
+              {summaryData.dateFrom && (
+                <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Calendar className="w-3 h-3" />
+                  {summaryData.dateFrom === summaryData.dateTo
+                    ? formatDate(summaryData.dateFrom)
+                    : `${formatDate(summaryData.dateFrom)} – ${formatDate(summaryData.dateTo!)}`}
+                </span>
+              )}
               {unmappedKurirCount > 0 && (
                 <span className="text-xs bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
                   <GitMerge className="w-3 h-3" />
@@ -465,15 +482,44 @@ export default function KasirSyncReviewPage() {
                               {idx === 0 ? row.branch : ''}
                             </td>
                             <td className="py-1">
-                              <span className={cn(
-                                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-semibold',
-                                exp.isKurir
-                                  ? 'bg-orange-100 text-orange-700'
-                                  : 'bg-slate-100 text-slate-600'
-                              )}>
-                                {exp.isKurir && <GitMerge className="w-2.5 h-2.5" />}
-                                {exp.kategori}
-                              </span>
+                              <div className="flex flex-col gap-0.5">
+                                <span className={cn(
+                                  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-semibold w-fit',
+                                  exp.isKurir
+                                    ? 'bg-orange-100 text-orange-700'
+                                    : 'bg-slate-100 text-slate-600'
+                                )}>
+                                  {exp.isKurir && <GitMerge className="w-2.5 h-2.5" />}
+                                  {exp.kategori}
+                                </span>
+                                {exp.isKurir && (
+                                  mappings[exp.id] ? (
+                                    <button
+                                      onClick={() => {
+                                        const fullItem = items.find((i) => i.id === exp.id)
+                                        if (fullItem) setMappingModal(fullItem)
+                                      }}
+                                      className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold flex items-center gap-0.5 w-fit"
+                                    >
+                                      <CheckCircle2 className="w-2.5 h-2.5" />
+                                      {mappings[exp.id].targets.length > 1
+                                        ? `Dibagi ${mappings[exp.id].targets.length} cabang`
+                                        : 'Mapped'} · Edit
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => {
+                                        const fullItem = items.find((i) => i.id === exp.id)
+                                        if (fullItem) setMappingModal(fullItem)
+                                      }}
+                                      className="text-xs text-orange-600 hover:text-orange-800 font-semibold flex items-center gap-0.5 w-fit"
+                                    >
+                                      <GitMerge className="w-2.5 h-2.5" />
+                                      Set mapping
+                                    </button>
+                                  )
+                                )}
+                              </div>
                             </td>
                             <td className="py-1 text-right font-bold text-red-600 tabular-nums">
                               {formatRupiah(exp.nominal)}
