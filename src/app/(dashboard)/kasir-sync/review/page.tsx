@@ -292,7 +292,7 @@ export default function KasirSyncReviewPage() {
 
     // Rentang tanggal dari semua item pending
     const allPending = [...pendingSales, ...pendingExp]
-    const uniqueDates = [...new Set(allPending.map((i) => i.tanggal).filter(Boolean))].sort()
+    const uniqueDates = Array.from(new Set(allPending.map((i) => i.tanggal).filter(Boolean))).sort()
     const dateFrom = uniqueDates[0] ?? null
     const dateTo = uniqueDates[uniqueDates.length - 1] ?? null
 
