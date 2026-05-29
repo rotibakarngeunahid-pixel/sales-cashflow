@@ -157,6 +157,15 @@ export interface KasirImportResult {
   errors: string[]
 }
 
+// ----- Combined import result (penjualan + kas keluar sekaligus) -----
+
+export interface CombinedImportResult {
+  success:  boolean
+  sales:    KasirImportResult
+  expenses: KasirImportResult
+  message:  string
+}
+
 // ----- Helpers -----
 
 export function normalizePaymentMethod(raw: string): 'Tunai' | 'QRIS' | null {

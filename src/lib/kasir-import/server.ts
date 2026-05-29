@@ -2,14 +2,12 @@ import 'server-only'
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from '@/types/database'
-// crypto.randomUUID() tersedia di Node.js 14.17+
 const uuidv4 = () => crypto.randomUUID()
 import {
   KASIR_SALES_SOURCE,
   KASIR_EXPENSES_SOURCE,
   KASIR_SOURCE_LABEL,
   normalizePaymentMethod,
-  shouldSkipPaymentMethod,
   normalizeBranchName,
   makeSaleImportKey,
   makeExpenseImportKey,
@@ -26,6 +24,7 @@ import {
   type KasirExpenseMappingConfig,
   type KasirImportResult,
   type MappingTarget,
+  type CombinedImportResult,
 } from './shared'
 
 type Supabase = SupabaseClient<Database>
@@ -47,10 +46,11 @@ export class KasirImportError extends Error {
 }
 
 // =============================================
-// Kasir API client
+// POS PHP API client
+// URL: POS_API_URL env var → https://pos.rotibakarngeunah.my.id/api/api.php/rpc
+// Auth: X-API-Key header (POS_API_SECRET_KEY) + p_api_key body (KASIR_INTEGRATION_API_KEY)
 // =============================================
 
-const KASIR_BASE_URL = 'https://mcrhlwqmeccighmxmccz.supabase.co/rest/v1/rpc'
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 interface KasirRpcParams {
@@ -60,10 +60,11 @@ interface KasirRpcParams {
 }
 
 async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<unknown[]> {
-  const apiKey = process.env.KASIR_INTEGRATION_API_KEY
-  const supabaseKey = process.env.KASIR_SUPABASE_ANON_KEY
+  const integrationApiKey = process.env.KASIR_INTEGRATION_API_KEY
+  const posApiSecretKey   = process.env.POS_API_SECRET_KEY
+  const posApiUrl         = process.env.POS_API_URL || 'https://pos.rotibakarngeunah.my.id/api/api.php/rpc'
 
-  if (!apiKey) {
+  if (!integrationApiKey) {
     throw new KasirImportError(
       'API Key integrasi kasir belum dikonfigurasi. Hubungi administrator.',
       500,
@@ -72,28 +73,27 @@ async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<u
   }
 
   const body: Record<string, string> = {
-    p_api_key: apiKey,
-    p_date_from: params.p_date_from,
-    p_date_to: params.p_date_to,
+    p_api_key:    integrationApiKey,
+    p_date_from:  params.p_date_from,
+    p_date_to:    params.p_date_to,
   }
   if (params.p_branch_id) body.p_branch_id = params.p_branch_id
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Accept': 'application/json',
+    'Accept':       'application/json',
   }
-  if (supabaseKey) {
-    headers['apikey'] = supabaseKey
-    headers['Authorization'] = `Bearer ${supabaseKey}`
+  if (posApiSecretKey) {
+    headers['X-API-Key'] = posApiSecretKey
   }
 
   let response: Response
   try {
-    response = await fetch(`${KASIR_BASE_URL}/${endpoint}`, {
-      method: 'POST',
+    response = await fetch(`${posApiUrl}/${endpoint}`, {
+      method:  'POST',
       headers,
-      body: JSON.stringify(body),
-      cache: 'no-store',
+      body:    JSON.stringify(body),
+      cache:   'no-store',
     })
   } catch {
     throw new KasirImportError(
@@ -118,7 +118,7 @@ async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<u
     const msg = getPayloadMessage(raw)
     if (response.status === 401 || response.status === 403) {
       throw new KasirImportError(
-        'API Key integrasi kasir tidak valid atau tidak punya akses.',
+        'API Key tidak valid atau tidak punya akses ke sistem kasir.',
         401,
         'invalid_api_key'
       )
@@ -130,9 +130,10 @@ async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<u
     )
   }
 
-  // Respons Supabase RPC bisa berupa array atau objek terbungkus
-  if (Array.isArray(raw)) return raw
+  // PHP API mengembalikan { success, data: [...], ... }
   if (isRecord(raw) && Array.isArray(raw.data)) return raw.data as unknown[]
+  // Fallback: respons array langsung
+  if (Array.isArray(raw)) return raw
   if (isRecord(raw) && raw.success === false) {
     const msg = getPayloadMessage(raw)
     throw new KasirImportError(
@@ -141,14 +142,6 @@ async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<u
       'api_error'
     )
   }
-  if (isRecord(raw)) {
-    // Coba temukan array di level pertama
-    for (const val of Object.values(raw)) {
-      if (Array.isArray(val)) return val as unknown[]
-    }
-  }
-
-  // Jika kosong atau tidak dikenali, kembalikan array kosong
   return []
 }
 
@@ -162,7 +155,6 @@ function getField(record: AnyRecord, ...keys: string[]): unknown {
   for (const key of keys) {
     const val = record[key] ?? record[key.toLowerCase()] ?? record[key.toUpperCase()]
     if (val !== undefined && val !== null && val !== '') return val
-    // Case-insensitive search
     const found = Object.keys(record).find((k) => k.toLowerCase() === key.toLowerCase())
     if (found && record[found] !== undefined && record[found] !== null && record[found] !== '') {
       return record[found]
@@ -201,22 +193,22 @@ function getBoolean(record: AnyRecord, ...keys: string[]): boolean {
 }
 
 /**
- * Ambil datetime string dari record.
- * Mencoba berbagai kombinasi field tanggal + jam.
+ * Ambil datetime dari record. PHP API mengembalikan `created_at: "YYYY-MM-DD HH:mm:ss"` dalam WITA.
+ * Karena tidak ada timezone suffix, nilai WITA dipertahankan apa adanya.
  */
 function getDatetime(record: AnyRecord): { dateWITA: string; timeWITA: string; datetimeRaw: string } {
-  // Coba full datetime dulu
+  // Coba full datetime dulu (format PHP API: "2024-01-01 10:30:00")
   const fullDt = getString(
     record,
-    'transaction_datetime', 'created_at', 'datetime', 'waktu', 'tanggal_waktu',
-    'transaction_time', 'expense_datetime', 'tanggal_transaksi'
+    'created_at', 'transaction_datetime', 'expense_datetime',
+    'datetime', 'tanggal_waktu', 'transaction_time', 'tanggal_transaksi'
   )
 
-  if (fullDt && fullDt.includes('T') || (fullDt && fullDt.includes(' ') && fullDt.length > 10)) {
+  if (fullDt && (fullDt.includes('T') || (fullDt.includes(' ') && fullDt.length > 10))) {
     return parseDatetimeString(fullDt)
   }
 
-  // Pisah tanggal + jam
+  // Fallback: pisah tanggal + jam
   const tanggal = getString(record, 'tanggal', 'date', 'transaction_date', 'expense_date', 'report_date')
   const jam = getString(record, 'jam', 'time', 'waktu', 'transaction_time', 'expense_time', 'hour')
 
@@ -225,7 +217,6 @@ function getDatetime(record: AnyRecord): { dateWITA: string; timeWITA: string; d
     return parseDatetimeString(combined)
   }
 
-  // Fallback
   return { dateWITA: '', timeWITA: '', datetimeRaw: '' }
 }
 
@@ -235,16 +226,15 @@ function parseDatetimeString(raw: string): { dateWITA: string; timeWITA: string;
 
   let d: Date
   if (hasTimezone) {
+    // Ada timezone — konversi ke WITA (UTC+8)
     d = new Date(trimmed)
-    // Convert ke WITA (UTC+8)
     d = new Date(d.getTime() + 8 * 60 * 60 * 1000)
   } else {
-    // Anggap sudah WITA
-    d = new Date(trimmed.replace(' ', 'T'))
+    // Tidak ada timezone — anggap sudah WITA, parse sebagai UTC agar tidak ada shift
+    d = new Date(trimmed.replace(' ', 'T') + 'Z')
   }
 
   if (isNaN(d.getTime())) {
-    // Coba format tanggal biasa
     const dateOnly = trimmed.slice(0, 10)
     if (DATE_RE.test(dateOnly)) {
       return { dateWITA: dateOnly, timeWITA: '00:00', datetimeRaw: trimmed }
@@ -252,15 +242,15 @@ function parseDatetimeString(raw: string): { dateWITA: string; timeWITA: string;
     return { dateWITA: '', timeWITA: '', datetimeRaw: trimmed }
   }
 
-  const year = d.getUTCFullYear()
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0')
-  const day = String(d.getUTCDate()).padStart(2, '0')
-  const hour = String(d.getUTCHours()).padStart(2, '0')
+  const year   = String(d.getUTCFullYear())
+  const month  = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day    = String(d.getUTCDate()).padStart(2, '0')
+  const hour   = String(d.getUTCHours()).padStart(2, '0')
   const minute = String(d.getUTCMinutes()).padStart(2, '0')
 
   return {
-    dateWITA: `${year}-${month}-${day}`,
-    timeWITA: `${hour}:${minute}`,
+    dateWITA:    `${year}-${month}-${day}`,
+    timeWITA:    `${hour}:${minute}`,
     datetimeRaw: trimmed,
   }
 }
@@ -290,10 +280,8 @@ async function loadLocalBranches(supabase: Supabase): Promise<LocalBranch[]> {
 
 function matchBranch(kasirName: string, branches: LocalBranch[]): LocalBranch | null {
   const normalized = normalizeBranchName(kasirName)
-  // Exact match dulu
   const exact = branches.find((b) => normalizeBranchName(b.name) === normalized)
   if (exact) return exact
-  // Substring match
   const partial = branches.find(
     (b) => normalized.includes(normalizeBranchName(b.name)) ||
            normalizeBranchName(b.name).includes(normalized)
@@ -341,7 +329,6 @@ async function getSalesCategoryId(supabase: Supabase, paymentCategory: 'Tunai' |
     .is('deleted_at', null)
 
   const categories = data || []
-  // Cari "Penjualan Tunai/QRIS" dulu, lalu "Penjualan"
   const specific = categories.find(
     (c) => normalizeBranchName(c.name) === normalizeBranchName(`Penjualan ${paymentCategory}`)
   )
@@ -389,7 +376,7 @@ export async function getSalesPreview(
   const [rawData, branches] = await Promise.all([
     callKasirRpc('get_sales_integration', {
       p_date_from: params.startDate,
-      p_date_to: params.endDate,
+      p_date_to:   params.endDate,
     }),
     loadLocalBranches(supabase),
   ])
@@ -402,7 +389,6 @@ export async function getSalesPreview(
     )
   }
 
-  // Normalize & filter
   const normalized = rawData
     .filter(isRecord)
     .map((r) => normalizeRawSaleRecord(r as AnyRecord))
@@ -416,10 +402,8 @@ export async function getSalesPreview(
     )
   }
 
-  // Filter berdasarkan payment method
   const filtered = filterByPaymentMethod(normalized, params.paymentMethod)
 
-  // Filter berdasarkan branch jika dipilih
   const branchFiltered = params.branchId
     ? filtered.filter((item) => {
         const matched = matchBranch(item.branchName, branches)
@@ -435,16 +419,15 @@ export async function getSalesPreview(
     )
   }
 
-  // Build import keys dan cek duplikat
   const importKeys = branchFiltered.map((item) =>
     makeSaleImportKey(item.branchName, item.transactionId)
   )
   const existingKeys = await loadExistingImportKeys(supabase, importKeys)
 
   const items: KasirSalePreviewItem[] = branchFiltered.map((item) => {
-    const importKey = makeSaleImportKey(item.branchName, item.transactionId)
+    const importKey     = makeSaleImportKey(item.branchName, item.transactionId)
     const matchedBranch = matchBranch(item.branchName, branches)
-    const isDuplicate = existingKeys.has(importKey)
+    const isDuplicate   = existingKeys.has(importKey)
 
     let status: KasirSalePreviewItem['status']
     if (!matchedBranch) {
@@ -457,18 +440,18 @@ export async function getSalesPreview(
 
     return {
       importKey,
-      transactionId: item.transactionId,
-      dateWITA: item.dateWITA,
-      timeWITA: item.timeWITA,
-      datetimeRaw: item.datetimeRaw,
-      branchName: item.branchName,
-      branchId: matchedBranch?.id ?? null,
-      paymentMethod: item.paymentMethod,
+      transactionId:   item.transactionId,
+      dateWITA:        item.dateWITA,
+      timeWITA:        item.timeWITA,
+      datetimeRaw:     item.datetimeRaw,
+      branchName:      item.branchName,
+      branchId:        matchedBranch?.id ?? null,
+      paymentMethod:   item.paymentMethod,
       paymentCategory: item.paymentCategory,
-      amount: item.amount,
-      cashier: item.cashier,
+      amount:          item.amount,
+      cashier:         item.cashier,
       status,
-      statusLabel: STATUS_LABELS[status],
+      statusLabel:     STATUS_LABELS[status],
     }
   })
 
@@ -488,57 +471,57 @@ export async function importSales(
   supabase: Supabase,
   params: SalesImportParams
 ): Promise<KasirImportResult> {
-  const preview = await getSalesPreview(supabase, params)
+  const preview  = await getSalesPreview(supabase, params)
   const newItems = preview.items.filter((item) => item.status === 'new' && item.branchId)
 
   if (newItems.length === 0) {
     return {
-      success: true,
-      totalFound: preview.items.length,
+      success:      true,
+      totalFound:   preview.items.length,
       totalSuccess: 0,
-      totalFailed: 0,
+      totalFailed:  0,
       totalSkipped: preview.items.filter((i) => i.status !== 'new').length,
-      totalAmount: 0,
-      message: 'Tidak ada data baru untuk diimport. Semua data sudah pernah diimport sebelumnya.',
-      errors: [],
+      totalAmount:  0,
+      message:      'Tidak ada data penjualan baru untuk diimport. Semua sudah pernah diimport sebelumnya.',
+      errors:       [],
     }
   }
 
   let totalSuccess = 0
-  let totalFailed = 0
-  let totalAmount = 0
+  let totalFailed  = 0
+  let totalAmount  = 0
   const errors: string[] = []
 
   for (const item of newItems) {
     if (!item.branchId || !item.paymentCategory) continue
 
-    const categoryId = await getSalesCategoryId(supabase, item.paymentCategory).catch(() => null)
+    const categoryId  = await getSalesCategoryId(supabase, item.paymentCategory).catch(() => null)
     const description = `Penjualan ${item.paymentCategory} - ${item.branchName} - ${item.dateWITA} ${item.timeWITA} WITA`
 
     const payload = {
       transaction_date: item.dateWITA,
-      branch_id: item.branchId,
+      branch_id:        item.branchId,
       transaction_type: 'cash_in' as const,
-      category_id: categoryId,
+      category_id:      categoryId,
       description,
-      cash_in: item.amount,
-      cash_out: 0,
-      amount: item.amount,
-      source: KASIR_SALES_SOURCE,
-      source_id: null,
-      import_key: item.importKey,
-      source_label: KASIR_SOURCE_LABEL,
-      source_metadata: {
-        transaction_id: item.transactionId,
-        branch_name: item.branchName,
-        payment_method: item.paymentMethod,
-        payment_category: item.paymentCategory,
-        cashier: item.cashier,
-        time_wita: item.timeWITA,
-        datetime_raw: item.datetimeRaw,
-        import_date: new Date().toISOString(),
+      cash_in:          item.amount,
+      cash_out:         0,
+      amount:           item.amount,
+      source:           KASIR_SALES_SOURCE,
+      source_id:        null,
+      import_key:       item.importKey,
+      source_label:     KASIR_SOURCE_LABEL,
+      source_metadata:  {
+        transaction_id:  item.transactionId,
+        branch_name:     item.branchName,
+        payment_method:  item.paymentMethod,
+        payment_category:item.paymentCategory,
+        cashier:         item.cashier,
+        time_wita:       item.timeWITA,
+        datetime_raw:    item.datetimeRaw,
+        import_date:     new Date().toISOString(),
       },
-      status: 'active' as const,
+      status:     'active' as const,
       created_by: params.userId,
       updated_by: params.userId,
     }
@@ -551,11 +534,10 @@ export async function importSales(
 
     if (error) {
       if (error.message.toLowerCase().includes('unique') || error.message.toLowerCase().includes('duplicate')) {
-        // Sudah ada, skip
         continue
       }
       totalFailed++
-      errors.push(`Gagal import ${item.transactionId}: ${error.message}`)
+      errors.push(`Gagal import penjualan ${item.transactionId}: ${error.message}`)
       continue
     }
 
@@ -566,10 +548,10 @@ export async function importSales(
       try {
         await supabase.from('audit_logs').insert({
           table_name: 'cashflow_transactions',
-          record_id: inserted.id,
-          action: 'kasir_sales_imported',
-          old_data: null,
-          new_data: payload as unknown as Record<string, unknown>,
+          record_id:  inserted.id,
+          action:     'kasir_sales_imported',
+          old_data:   null,
+          new_data:   payload as unknown as Record<string, unknown>,
           changed_by: params.userId,
           changed_at: new Date().toISOString(),
         })
@@ -582,26 +564,25 @@ export async function importSales(
 
   const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'penjualan' })
 
-  // Tulis log
   await writeKasirImportLog(supabase, {
-    importType: 'sales',
-    periodStart: params.startDate,
-    periodEnd: params.endDate,
-    branchFilter: params.branchId,
+    importType:          'sales',
+    periodStart:         params.startDate,
+    periodEnd:           params.endDate,
+    branchFilter:        params.branchId,
     paymentMethodFilter: params.paymentMethod,
-    totalFound: preview.items.length,
+    totalFound:          preview.items.length,
     totalSuccess,
     totalFailed,
     totalSkipped,
     totalAmount,
-    status: totalFailed > 0 && totalSuccess === 0 ? 'failed' : totalFailed > 0 ? 'partial' : 'success',
+    status:              totalFailed > 0 && totalSuccess === 0 ? 'failed' : totalFailed > 0 ? 'partial' : 'success',
     message,
-    userId: params.userId,
+    userId:              params.userId,
   })
 
   return {
-    success: totalFailed === 0 || totalSuccess > 0,
-    totalFound: preview.items.length,
+    success:      totalFailed === 0 || totalSuccess > 0,
+    totalFound:   preview.items.length,
     totalSuccess,
     totalFailed,
     totalSkipped,
@@ -630,7 +611,7 @@ export async function getExpensesPreview(
   const [rawData, branches, categories] = await Promise.all([
     callKasirRpc('get_kas_keluar_integration', {
       p_date_from: params.startDate,
-      p_date_to: params.endDate,
+      p_date_to:   params.endDate,
     }),
     loadLocalBranches(supabase),
     loadLocalCategories(supabase),
@@ -657,11 +638,10 @@ export async function getExpensesPreview(
     )
   }
 
-  // Filter void
-  const nonVoid = normalized.filter((item) => !item.isVoid)
+  // PHP sudah filter is_void=0, tapi kita tetap cek di sini untuk keamanan
+  const nonVoid  = normalized.filter((item) => !item.isVoid)
   const voidCount = normalized.length - nonVoid.length
 
-  // Filter by branch
   const branchFiltered = params.branchId
     ? nonVoid.filter((item) => matchBranch(item.branchName, branches)?.id === params.branchId)
     : nonVoid
@@ -674,14 +654,14 @@ export async function getExpensesPreview(
     )
   }
 
-  const importKeys = branchFiltered.map((item) => makeExpenseImportKey(item.branchName, item.expenseId))
+  const importKeys   = branchFiltered.map((item) => makeExpenseImportKey(item.branchName, item.expenseId))
   const existingKeys = await loadExistingImportKeys(supabase, importKeys)
 
   const items: KasirExpensePreviewItem[] = branchFiltered.map((item) => {
-    const importKey = makeExpenseImportKey(item.branchName, item.expenseId)
-    const matchedBranch = matchBranch(item.branchName, branches)
+    const importKey       = makeExpenseImportKey(item.branchName, item.expenseId)
+    const matchedBranch   = matchBranch(item.branchName, branches)
     const localCategoryId = matchCategory(item.category || item.expenseName, categories, 'cash_out')
-    const isDuplicate = existingKeys.has(importKey)
+    const isDuplicate     = existingKeys.has(importKey)
 
     let status: KasirExpensePreviewItem['status']
     if (!matchedBranch) {
@@ -701,22 +681,22 @@ export async function getExpensesPreview(
 
     return {
       importKey,
-      expenseId: item.expenseId,
-      dateWITA: item.dateWITA,
-      timeWITA: item.timeWITA,
-      datetimeRaw: item.datetimeRaw,
-      branchName: item.branchName,
-      branchId: matchedBranch?.id ?? null,
-      expenseName: item.expenseName,
-      category: item.category,
+      expenseId:     item.expenseId,
+      dateWITA:      item.dateWITA,
+      timeWITA:      item.timeWITA,
+      datetimeRaw:   item.datetimeRaw,
+      branchName:    item.branchName,
+      branchId:      matchedBranch?.id ?? null,
+      expenseName:   item.expenseName,
+      category:      item.category,
       localCategoryId,
-      amount: item.amount,
-      notes: item.notes,
-      recordedBy: item.recordedBy,
-      isVoid: item.isVoid,
+      amount:        item.amount,
+      notes:         item.notes,
+      recordedBy:    item.recordedBy,
+      isVoid:        item.isVoid,
       status,
-      statusLabel: STATUS_LABELS[status],
-      mapping: defaultMapping,
+      statusLabel:   STATUS_LABELS[status],
+      mapping:       defaultMapping,
     }
   })
 
@@ -737,33 +717,31 @@ export async function importExpenses(
   supabase: Supabase,
   params: ExpensesImportParams
 ): Promise<KasirImportResult> {
-  const preview = await getExpensesPreview(supabase, params)
+  const preview  = await getExpensesPreview(supabase, params)
   const newItems = preview.items.filter((item) => item.status === 'new')
 
   if (newItems.length === 0) {
     return {
-      success: true,
-      totalFound: preview.items.length,
+      success:      true,
+      totalFound:   preview.items.length,
       totalSuccess: 0,
-      totalFailed: 0,
+      totalFailed:  0,
       totalSkipped: preview.items.filter((i) => i.status !== 'new').length,
-      totalAmount: 0,
-      message: 'Tidak ada data baru untuk diimport.',
-      errors: [],
+      totalAmount:  0,
+      message:      'Tidak ada data kas keluar baru untuk diimport.',
+      errors:       [],
     }
   }
 
   let totalSuccess = 0
-  let totalFailed = 0
-  let totalAmount = 0
+  let totalFailed  = 0
+  let totalAmount  = 0
   const errors: string[] = []
 
   for (const item of newItems) {
-    // Tentukan mapping yang akan dipakai
     const mapping: KasirExpenseMappingConfig =
       params.mappings?.[item.expenseId] ?? item.mapping
 
-    // Validasi mapping
     if (mapping.mode !== 'original' || mapping.targets.length === 0) {
       const validationError = validateMappingTargets(mapping.targets, item.amount)
       if (validationError) {
@@ -773,7 +751,6 @@ export async function importExpenses(
       }
     }
 
-    // Jika original dan tidak ada targets, buat dari branchId
     const targets: MappingTarget[] = mapping.targets.length > 0
       ? mapping.targets
       : item.branchId
@@ -786,10 +763,8 @@ export async function importExpenses(
       continue
     }
 
-    // Untuk split: buat group_id agar bisa dilacak
     const groupId = targets.length > 1 ? uuidv4() : null
 
-    // Validasi total split
     if (targets.length > 1) {
       const sumTargets = targets.reduce((s, t) => s + t.amount, 0)
       if (Math.abs(sumTargets - item.amount) > 1) {
@@ -802,7 +777,7 @@ export async function importExpenses(
     let partialFailed = false
 
     for (const target of targets) {
-      const isplit = targets.length > 1
+      const isplit    = targets.length > 1
       const importKey = isplit
         ? `${makeExpenseImportKey(target.branchName, item.expenseId)}:split:${target.branchId}`
         : makeExpenseImportKey(item.branchName, item.expenseId)
@@ -813,34 +788,34 @@ export async function importExpenses(
 
       const payload = {
         transaction_date: item.dateWITA,
-        branch_id: target.branchId,
+        branch_id:        target.branchId,
         transaction_type: 'cash_out' as const,
-        category_id: item.localCategoryId,
+        category_id:      item.localCategoryId,
         description,
-        cash_in: 0,
-        cash_out: target.amount,
-        amount: target.amount,
-        source: KASIR_EXPENSES_SOURCE,
-        source_id: null,
-        import_key: importKey,
-        source_label: KASIR_SOURCE_LABEL,
-        source_metadata: {
-          expense_id: item.expenseId,
+        cash_in:          0,
+        cash_out:         target.amount,
+        amount:           target.amount,
+        source:           KASIR_EXPENSES_SOURCE,
+        source_id:        null,
+        import_key:       importKey,
+        source_label:     KASIR_SOURCE_LABEL,
+        source_metadata:  {
+          expense_id:      item.expenseId,
           original_branch: item.branchName,
           original_amount: item.amount,
-          expense_name: item.expenseName,
-          category: item.category,
-          notes: item.notes,
-          recorded_by: item.recordedBy,
-          time_wita: item.timeWITA,
-          datetime_raw: item.datetimeRaw,
-          mapping_mode: mapping.mode,
-          is_split: isplit,
-          split_count: targets.length,
-          import_date: new Date().toISOString(),
+          expense_name:    item.expenseName,
+          category:        item.category,
+          notes:           item.notes,
+          recorded_by:     item.recordedBy,
+          time_wita:       item.timeWITA,
+          datetime_raw:    item.datetimeRaw,
+          mapping_mode:    mapping.mode,
+          is_split:        isplit,
+          split_count:     targets.length,
+          import_date:     new Date().toISOString(),
         },
         reference_group_id: groupId,
-        status: 'active' as const,
+        status:     'active' as const,
         created_by: params.userId,
         updated_by: params.userId,
       }
@@ -853,7 +828,7 @@ export async function importExpenses(
 
       if (error) {
         if (error.message.toLowerCase().includes('unique') || error.message.toLowerCase().includes('duplicate')) {
-          continue // Skip duplikat
+          continue
         }
         partialFailed = true
         errors.push(`Gagal simpan ${item.expenseName} → ${target.branchName}: ${error.message}`)
@@ -866,10 +841,10 @@ export async function importExpenses(
         try {
           await supabase.from('audit_logs').insert({
             table_name: 'cashflow_transactions',
-            record_id: inserted.id,
-            action: 'kasir_expenses_imported',
-            old_data: null,
-            new_data: payload as unknown as Record<string, unknown>,
+            record_id:  inserted.id,
+            action:     'kasir_expenses_imported',
+            old_data:   null,
+            new_data:   payload as unknown as Record<string, unknown>,
             changed_by: params.userId,
             changed_at: new Date().toISOString(),
           })
@@ -891,23 +866,23 @@ export async function importExpenses(
   const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'kas keluar' })
 
   await writeKasirImportLog(supabase, {
-    importType: 'expenses',
-    periodStart: params.startDate,
-    periodEnd: params.endDate,
+    importType:   'expenses',
+    periodStart:  params.startDate,
+    periodEnd:    params.endDate,
     branchFilter: params.branchId,
-    totalFound: preview.items.length,
+    totalFound:   preview.items.length,
     totalSuccess,
     totalFailed,
     totalSkipped,
     totalAmount,
-    status: totalFailed > 0 && totalSuccess === 0 ? 'failed' : totalFailed > 0 ? 'partial' : 'success',
+    status:       totalFailed > 0 && totalSuccess === 0 ? 'failed' : totalFailed > 0 ? 'partial' : 'success',
     message,
-    userId: params.userId,
+    userId:       params.userId,
   })
 
   return {
-    success: totalFailed === 0 || totalSuccess > 0,
-    totalFound: preview.items.length,
+    success:      totalFailed === 0 || totalSuccess > 0,
+    totalFound:   preview.items.length,
     totalSuccess,
     totalFailed,
     totalSkipped,
@@ -918,42 +893,159 @@ export async function importExpenses(
 }
 
 // =============================================
+// COMBINED IMPORT (penjualan + kas keluar sekaligus)
+// =============================================
+
+export interface CombinedImportParams {
+  startDate: string
+  endDate: string
+  branchId?: string
+  userId: string | null
+}
+
+function makeEmptyResult(message: string): KasirImportResult {
+  return {
+    success:      true,
+    totalFound:   0,
+    totalSuccess: 0,
+    totalFailed:  0,
+    totalSkipped: 0,
+    totalAmount:  0,
+    message,
+    errors:       [],
+  }
+}
+
+function makeFailedResult(err: unknown, fallbackMessage: string): KasirImportResult {
+  // Jika tidak ada data (periode kosong), anggap sukses dengan 0 item
+  if (err instanceof KasirImportError && err.code === 'empty_data') {
+    return makeEmptyResult('Tidak ada data pada periode ini.')
+  }
+  const message = err instanceof KasirImportError ? err.message : fallbackMessage
+  return {
+    success:      false,
+    totalFound:   0,
+    totalSuccess: 0,
+    totalFailed:  0,
+    totalSkipped: 0,
+    totalAmount:  0,
+    message,
+    errors:       [message],
+  }
+}
+
+export async function importCombined(
+  supabase: Supabase,
+  params: CombinedImportParams
+): Promise<CombinedImportResult> {
+  validateDateRange(params.startDate, params.endDate)
+
+  // Import penjualan dulu, lalu kas keluar (sequential agar tidak overload DB)
+  let salesResult: KasirImportResult
+  let expensesResult: KasirImportResult
+
+  try {
+    salesResult = await importSales(supabase, {
+      startDate:     params.startDate,
+      endDate:       params.endDate,
+      branchId:      params.branchId,
+      paymentMethod: 'Tunai+QRIS',
+      userId:        params.userId,
+    })
+  } catch (err) {
+    salesResult = makeFailedResult(err, 'Gagal mengimport data penjualan dari sistem kasir.')
+  }
+
+  try {
+    expensesResult = await importExpenses(supabase, {
+      startDate:  params.startDate,
+      endDate:    params.endDate,
+      branchId:   params.branchId,
+      userId:     params.userId,
+      mappings:   undefined, // gunakan mapping default (outlet asal)
+    })
+  } catch (err) {
+    expensesResult = makeFailedResult(err, 'Gagal mengimport data kas keluar dari sistem kasir.')
+  }
+
+  const overallSuccess = salesResult.success || expensesResult.success
+  const message        = buildCombinedMessage(salesResult, expensesResult)
+
+  return {
+    success:  overallSuccess,
+    sales:    salesResult,
+    expenses: expensesResult,
+    message,
+  }
+}
+
+function buildCombinedMessage(sales: KasirImportResult, expenses: KasirImportResult): string {
+  const parts: string[] = []
+
+  if (sales.totalSuccess > 0) {
+    parts.push(`${sales.totalSuccess} penjualan berhasil diimport (${formatRupiahSimple(sales.totalAmount)})`)
+  } else if (!sales.success && sales.errors.length > 0) {
+    parts.push(`Penjualan gagal: ${sales.message}`)
+  } else if (sales.totalFound === 0) {
+    parts.push('Tidak ada penjualan baru')
+  } else {
+    parts.push('Semua penjualan sudah pernah diimport')
+  }
+
+  if (expenses.totalSuccess > 0) {
+    parts.push(`${expenses.totalSuccess} kas keluar berhasil diimport (${formatRupiahSimple(expenses.totalAmount)})`)
+  } else if (!expenses.success && expenses.errors.length > 0) {
+    parts.push(`Kas keluar gagal: ${expenses.message}`)
+  } else if (expenses.totalFound === 0) {
+    parts.push('Tidak ada kas keluar baru')
+  } else {
+    parts.push('Semua kas keluar sudah pernah diimport')
+  }
+
+  return parts.join('. ') + '.'
+}
+
+function formatRupiahSimple(amount: number): string {
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount)
+}
+
+// =============================================
 // Log writer
 // =============================================
 
 interface LogEntry {
-  importType: 'sales' | 'expenses'
-  periodStart: string
-  periodEnd: string
-  branchFilter?: string
+  importType:          'sales' | 'expenses'
+  periodStart:         string
+  periodEnd:           string
+  branchFilter?:       string
   paymentMethodFilter?: string
-  totalFound: number
-  totalSuccess: number
-  totalFailed: number
-  totalSkipped: number
-  totalAmount: number
-  status: 'success' | 'failed' | 'partial'
-  message: string
-  userId: string | null
+  totalFound:          number
+  totalSuccess:        number
+  totalFailed:         number
+  totalSkipped:        number
+  totalAmount:         number
+  status:              'success' | 'failed' | 'partial'
+  message:             string
+  userId:              string | null
 }
 
 export async function writeKasirImportLog(supabase: Supabase, entry: LogEntry) {
   try {
     await supabase.from('kasir_import_logs').insert({
-      import_type: entry.importType,
-      period_start: entry.periodStart,
-      period_end: entry.periodEnd,
-      branch_filter: entry.branchFilter || null,
+      import_type:           entry.importType,
+      period_start:          entry.periodStart,
+      period_end:            entry.periodEnd,
+      branch_filter:         entry.branchFilter || null,
       payment_method_filter: entry.paymentMethodFilter || null,
-      total_found: entry.totalFound,
-      total_success: entry.totalSuccess,
-      total_failed: entry.totalFailed,
-      total_skipped: entry.totalSkipped,
-      total_amount: entry.totalAmount,
-      status: entry.status,
-      message: entry.message,
-      created_by: entry.userId,
-      imported_at: new Date().toISOString(),
+      total_found:           entry.totalFound,
+      total_success:         entry.totalSuccess,
+      total_failed:          entry.totalFailed,
+      total_skipped:         entry.totalSkipped,
+      total_amount:          entry.totalAmount,
+      status:                entry.status,
+      message:               entry.message,
+      created_by:            entry.userId,
+      imported_at:           new Date().toISOString(),
     })
   } catch { /* log bersifat non-blocking */ }
 }
@@ -963,15 +1055,15 @@ export async function writeKasirImportLog(supabase: Supabase, entry: LogEntry) {
 // =============================================
 
 interface NormalizedSale {
-  transactionId: string
-  dateWITA: string
-  timeWITA: string
-  datetimeRaw: string
-  branchName: string
-  paymentMethod: string
+  transactionId:   string
+  dateWITA:        string
+  timeWITA:        string
+  datetimeRaw:     string
+  branchName:      string
+  paymentMethod:   string
   paymentCategory: 'Tunai' | 'QRIS' | null
-  amount: number
-  cashier: string
+  amount:          number
+  cashier:         string
 }
 
 function normalizeRawSaleRecord(r: AnyRecord): NormalizedSale | null {
@@ -988,20 +1080,13 @@ function normalizeRawSaleRecord(r: AnyRecord): NormalizedSale | null {
   )
   if (!branchName) return null
 
-  const paymentMethod = getString(
-    r, 'payment_method', 'metode_pembayaran', 'payment', 'method', 'jenis_pembayaran', 'cara_bayar'
-  )
-
+  const paymentMethod   = getString(r, 'payment_method', 'metode_pembayaran', 'payment', 'method', 'jenis_pembayaran', 'cara_bayar')
   const paymentCategory = normalizePaymentMethod(paymentMethod)
 
-  const amount = getNumber(
-    r, 'total', 'amount', 'nominal', 'total_amount', 'grand_total', 'harga', 'nilai', 'jumlah'
-  )
+  const amount = getNumber(r, 'amount', 'total', 'nominal', 'total_amount', 'grand_total', 'harga', 'nilai', 'jumlah', 'total_penjualan')
   if (amount <= 0) return null
 
-  const cashier = getString(
-    r, 'cashier', 'kasir', 'cashier_name', 'nama_kasir', 'operator', 'staff', 'karyawan'
-  )
+  const cashier = getString(r, 'cashier', 'kasir', 'cashier_name', 'nama_kasir', 'operator', 'staff', 'karyawan')
 
   return {
     transactionId,
@@ -1017,17 +1102,17 @@ function normalizeRawSaleRecord(r: AnyRecord): NormalizedSale | null {
 }
 
 interface NormalizedExpense {
-  expenseId: string
-  dateWITA: string
-  timeWITA: string
+  expenseId:   string
+  dateWITA:    string
+  timeWITA:    string
   datetimeRaw: string
-  branchName: string
+  branchName:  string
   expenseName: string
-  category: string
-  amount: number
-  notes: string
-  recordedBy: string
-  isVoid: boolean
+  category:    string
+  amount:      number
+  notes:       string
+  recordedBy:  string
+  isVoid:      boolean
 }
 
 function normalizeRawExpenseRecord(r: AnyRecord): NormalizedExpense | null {
@@ -1052,18 +1137,14 @@ function normalizeRawExpenseRecord(r: AnyRecord): NormalizedExpense | null {
     r, 'category', 'kategori', 'category_name', 'nama_kategori', 'jenis'
   ) || expenseName
 
-  const amount = getNumber(
-    r, 'amount', 'nominal', 'total', 'jumlah', 'nilai', 'harga'
-  )
+  const amount = getNumber(r, 'amount', 'nominal', 'total', 'jumlah', 'nilai', 'harga')
   if (amount <= 0) return null
 
-  const notes = getString(r, 'notes', 'catatan', 'keterangan', 'note', 'remark')
-  const recordedBy = getString(
-    r, 'recorded_by', 'dicatat_oleh', 'user', 'admin', 'operator', 'staff', 'kasir'
-  )
+  const notes      = getString(r, 'notes', 'catatan', 'keterangan', 'note', 'remark')
+  const recordedBy = getString(r, 'recorded_by', 'dicatat_oleh', 'user', 'admin', 'operator', 'staff', 'kasir')
 
-  // Cek void
-  const isVoid = getBoolean(r, 'is_void', 'void', 'is_deleted', 'deleted', 'cancelled') ||
+  const isVoid =
+    getBoolean(r, 'is_void', 'void', 'is_deleted', 'deleted', 'cancelled') ||
     getString(r, 'status').toLowerCase() === 'void' ||
     getString(r, 'status').toLowerCase() === 'cancelled'
 
@@ -1074,10 +1155,10 @@ function normalizeRawExpenseRecord(r: AnyRecord): NormalizedExpense | null {
     datetimeRaw,
     branchName,
     expenseName: expenseName || 'Pengeluaran',
-    category: category || 'Lainnya',
+    category:    category    || 'Lainnya',
     amount,
-    notes: notes || '',
-    recordedBy: recordedBy || 'Tidak Diketahui',
+    notes:       notes      || '',
+    recordedBy:  recordedBy || 'Tidak Diketahui',
     isVoid,
   }
 }
@@ -1086,39 +1167,31 @@ function normalizeRawExpenseRecord(r: AnyRecord): NormalizedExpense | null {
 // Filter & summary builders
 // =============================================
 
-function filterByPaymentMethod(
-  items: NormalizedSale[],
-  filter: PaymentMethodFilter
-): NormalizedSale[] {
+function filterByPaymentMethod(items: NormalizedSale[], filter: PaymentMethodFilter): NormalizedSale[] {
   return items.filter((item) => {
-    if (item.paymentCategory === null) {
-      // Skip metode yang tidak dikenali sebagai Tunai/QRIS
-      return false
-    }
+    if (item.paymentCategory === null) return false
     if (filter === 'Tunai') return item.paymentCategory === 'Tunai'
-    if (filter === 'QRIS') return item.paymentCategory === 'QRIS'
-    // Tunai+QRIS: ambil keduanya
+    if (filter === 'QRIS')  return item.paymentCategory === 'QRIS'
     return item.paymentCategory === 'Tunai' || item.paymentCategory === 'QRIS'
   })
 }
 
-function buildSalesSummary(items: KasirSalePreviewItem[], filter: PaymentMethodFilter): KasirSalePreviewSummary {
-  const totalNew = items.filter((i) => i.status === 'new').length
-  const totalDuplicate = items.filter((i) => i.status === 'duplicate').length
-  const totalSkipped = items.filter((i) => i.status === 'skipped_payment').length
+function buildSalesSummary(items: KasirSalePreviewItem[], _filter: PaymentMethodFilter): KasirSalePreviewSummary {
+  const totalNew           = items.filter((i) => i.status === 'new').length
+  const totalDuplicate     = items.filter((i) => i.status === 'duplicate').length
+  const totalSkipped       = items.filter((i) => i.status === 'skipped_payment').length
   const totalBranchNotFound = items.filter((i) => i.status === 'branch_not_found').length
 
-  const newItems = items.filter((i) => i.status === 'new')
-  const totalCash = newItems.filter((i) => i.paymentCategory === 'Tunai').reduce((s, i) => s + i.amount, 0)
-  const totalQris = newItems.filter((i) => i.paymentCategory === 'QRIS').reduce((s, i) => s + i.amount, 0)
+  const newItems   = items.filter((i) => i.status === 'new')
+  const totalCash  = newItems.filter((i) => i.paymentCategory === 'Tunai').reduce((s, i) => s + i.amount, 0)
+  const totalQris  = newItems.filter((i) => i.paymentCategory === 'QRIS').reduce((s, i) => s + i.amount, 0)
   const totalAmount = totalCash + totalQris
 
-  // By branch
   const branchMap = new Map<string, { totalCash: number; totalQris: number; total: number }>()
   for (const item of newItems) {
     const existing = branchMap.get(item.branchName) || { totalCash: 0, totalQris: 0, total: 0 }
     if (item.paymentCategory === 'Tunai') existing.totalCash += item.amount
-    if (item.paymentCategory === 'QRIS') existing.totalQris += item.amount
+    if (item.paymentCategory === 'QRIS')  existing.totalQris += item.amount
     existing.total += item.amount
     branchMap.set(item.branchName, existing)
   }
@@ -1126,7 +1199,6 @@ function buildSalesSummary(items: KasirSalePreviewItem[], filter: PaymentMethodF
     .map(([branchName, vals]) => ({ branchName, ...vals }))
     .sort((a, b) => b.total - a.total)
 
-  // By date
   const dateMap = new Map<string, { total: number; count: number }>()
   for (const item of newItems) {
     const existing = dateMap.get(item.dateWITA) || { total: 0, count: 0 }
@@ -1153,11 +1225,11 @@ function buildSalesSummary(items: KasirSalePreviewItem[], filter: PaymentMethodF
 }
 
 function buildExpensesSummary(items: KasirExpensePreviewItem[], voidSkipped: number): KasirExpensePreviewSummary {
-  const totalNew = items.filter((i) => i.status === 'new').length
-  const totalDuplicate = items.filter((i) => i.status === 'duplicate').length
+  const totalNew            = items.filter((i) => i.status === 'new').length
+  const totalDuplicate      = items.filter((i) => i.status === 'duplicate').length
   const totalBranchNotFound = items.filter((i) => i.status === 'branch_not_found').length
 
-  const newItems = items.filter((i) => i.status === 'new')
+  const newItems    = items.filter((i) => i.status === 'new')
   const totalAmount = newItems.reduce((s, i) => s + i.amount, 0)
 
   const branchMap = new Map<string, { total: number; count: number }>()
@@ -1200,7 +1272,7 @@ function buildExpensesSummary(items: KasirExpensePreviewItem[], voidSkipped: num
 
 export function validateDateRange(startDate: string, endDate: string): void {
   if (!startDate) throw new KasirImportError('Tanggal mulai wajib diisi.', 400, 'invalid_date')
-  if (!endDate) throw new KasirImportError('Tanggal akhir wajib diisi.', 400, 'invalid_date')
+  if (!endDate)   throw new KasirImportError('Tanggal akhir wajib diisi.', 400, 'invalid_date')
   if (!DATE_RE.test(startDate) || !DATE_RE.test(endDate)) {
     throw new KasirImportError('Format tanggal harus YYYY-MM-DD.', 400, 'invalid_date')
   }
@@ -1211,20 +1283,20 @@ export function validateDateRange(startDate: string, endDate: string): void {
 
 function buildImportMessage(opts: {
   totalSuccess: number
-  totalFailed: number
+  totalFailed:  number
   totalSkipped: number
-  totalAmount: number
-  type: string
+  totalAmount:  number
+  type:         string
 }) {
   const parts: string[] = []
   if (opts.totalSuccess > 0) parts.push(`${opts.totalSuccess} ${opts.type} berhasil diimport`)
-  if (opts.totalFailed > 0) parts.push(`${opts.totalFailed} gagal`)
+  if (opts.totalFailed  > 0) parts.push(`${opts.totalFailed} gagal`)
   if (opts.totalSkipped > 0) parts.push(`${opts.totalSkipped} dilewati`)
-  if (opts.totalAmount > 0) {
+  if (opts.totalAmount  > 0) {
     const formatted = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(opts.totalAmount)
     parts.push(`total ${formatted}`)
   }
-  return parts.join(', ') + '.'
+  return parts.length > 0 ? parts.join(', ') + '.' : `Tidak ada data ${opts.type} baru.`
 }
 
 function isRecord(value: unknown): value is AnyRecord {
