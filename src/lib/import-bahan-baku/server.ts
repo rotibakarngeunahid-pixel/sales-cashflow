@@ -26,6 +26,11 @@ interface LocalBranch {
   name: string
 }
 
+interface PoMapping {
+  po_name: string
+  branch_id: string
+}
+
 interface NormalizedExternalItem {
   periodStart: string
   periodEnd: string
@@ -166,10 +171,18 @@ export async function getImportBahanBakuPreview(
     throw new ImportBahanBakuError('Belum ada pengeluaran bahan baku pada periode ini.', 404, 'empty_data')
   }
 
+  const poMappings = await loadPoMappings(supabase)
   const branchByName = new Map(branches.map((branch) => [normalizeName(branch.name), branch]))
+  const branchByPoName = new Map<string, LocalBranch>()
+  for (const mapping of poMappings) {
+    const branch = branches.find((b) => b.id === mapping.branch_id)
+    if (branch) branchByPoName.set(normalizeName(mapping.po_name), branch)
+  }
+
   const itemsWithBranch = normalized
     .map((item) => {
-      const branch = branchByName.get(normalizeName(item.branchName)) ?? null
+      const key = normalizeName(item.branchName)
+      const branch = branchByName.get(key) ?? branchByPoName.get(key) ?? null
       return { item, branch }
     })
     .filter(({ branch }) => !params.branchId || branch?.id === params.branchId)
@@ -371,6 +384,14 @@ async function loadBranches(supabase: Supabase): Promise<LocalBranch[]> {
   if (error) {
     throw new ImportBahanBakuError('Gagal membaca data cabang.', 500, 'branch_load_failed')
   }
+
+  return data || []
+}
+
+async function loadPoMappings(supabase: Supabase): Promise<PoMapping[]> {
+  const { data } = await supabase
+    .from('po_branch_mappings')
+    .select('po_name,branch_id')
 
   return data || []
 }

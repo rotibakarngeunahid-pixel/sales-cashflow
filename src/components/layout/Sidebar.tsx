@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Eraser,
   Store,
+  Package,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -47,6 +48,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { href: '/cashflow', label: 'Cashflow', icon: Wallet },
       { href: '/kasir-import', label: 'Import dari POS', icon: Store },
+      { href: '/cashflow/import-bahan-baku', label: 'Import Bahan Baku', icon: Package },
       { href: '/cashflow/analysis', label: 'Analisa Cashflow', icon: BarChart3 },
       { href: '/cashflow/categories', label: 'Kategori Cashflow', icon: Tag },
     ],

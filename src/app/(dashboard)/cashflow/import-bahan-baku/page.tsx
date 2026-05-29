@@ -7,12 +7,14 @@ import {
   Clock3,
   CloudDownload,
   Database,
+  MapPin,
   RefreshCw,
   Save,
+  Trash2,
   XCircle,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { Branch, RawMaterialImportLog } from '@/types/database'
+import type { Branch, PoBranchMapping, RawMaterialImportLog } from '@/types/database'
 import type {
   ImportBahanBakuItem,
   ImportBahanBakuPayload,
@@ -98,6 +100,13 @@ export default function ImportBahanBakuPage() {
   const [logs, setLogs] = useState<RawMaterialImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
 
+  // Branch mapping state
+  const [pendingMappings, setPendingMappings] = useState<Record<string, string>>({})
+  const [savingMappingKey, setSavingMappingKey] = useState<string | null>(null)
+  const [mappingSuccess, setMappingSuccess] = useState<string | null>(null)
+  const [existingMappings, setExistingMappings] = useState<PoBranchMapping[]>([])
+  const [mappingsLoading, setMappingsLoading] = useState(true)
+
   useEffect(() => {
     async function loadBranches() {
       const supabase = createClient()
@@ -130,6 +139,71 @@ export default function ImportBahanBakuPage() {
   useEffect(() => {
     loadLogs()
   }, [loadLogs])
+
+  const loadMappings = useCallback(async () => {
+    setMappingsLoading(true)
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('po_branch_mappings')
+      .select('*, branch:branches(id,name)')
+      .order('po_name')
+    setExistingMappings((data || []) as unknown as PoBranchMapping[])
+    setMappingsLoading(false)
+  }, [])
+
+  useEffect(() => { loadMappings() }, [loadMappings])
+
+  const unresolvedBranches = useMemo(() => {
+    const seen = new Set<string>()
+    return items
+      .filter((item) => item.status === 'branch_not_found')
+      .filter((item) => { if (seen.has(item.branchName)) return false; seen.add(item.branchName); return true })
+      .map((item) => item.branchName)
+  }, [items])
+
+  async function handleSaveMapping(poName: string) {
+    const branchId = pendingMappings[poName]
+    if (!branchId) return
+
+    setSavingMappingKey(poName)
+    setError(null)
+    setMappingSuccess(null)
+
+    try {
+      const res = await fetch('/api/import-bahan-baku/map-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ po_name: poName, branch_id: branchId }),
+      })
+      const json = await res.json() as { success: boolean; message?: string }
+
+      if (!res.ok || !json.success) {
+        setError(json.message || 'Gagal menyimpan mapping cabang.')
+        return
+      }
+
+      setPendingMappings((prev) => { const next = { ...prev }; delete next[poName]; return next })
+      await Promise.all([
+        loadMappings(),
+        hasFetched ? pullData({ keepSuccess: true }) : Promise.resolve(),
+      ])
+      setMappingSuccess(`Mapping "${poName}" berhasil disimpan. Preview diperbarui.`)
+    } finally {
+      setSavingMappingKey(null)
+    }
+  }
+
+  async function handleDeleteMapping(poName: string) {
+    const res = await fetch(`/api/import-bahan-baku/map-branch?po_name=${encodeURIComponent(poName)}`, {
+      method: 'DELETE',
+    })
+    const json = await res.json() as { success: boolean; message?: string }
+    if (res.ok && json.success) {
+      await loadMappings()
+    } else {
+      setError(json.message || 'Gagal menghapus mapping.')
+    }
+  }
 
   const previewTotals = useMemo(() => {
     const branchNames = new Set(items.map((item) => item.branchName))
@@ -349,6 +423,62 @@ export default function ImportBahanBakuPage() {
         />
       )}
 
+      {mappingSuccess && !pulling && (
+        <Notice type="success" message={mappingSuccess} />
+      )}
+
+      {!pulling && unresolvedBranches.length > 0 && (
+        <section className="card overflow-hidden border-l-4 border-amber-400">
+          <div className="p-4 space-y-4">
+            <div className="flex items-start gap-3">
+              <MapPin className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Mapping Cabang Diperlukan</h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Nama cabang berikut dari sistem bahan baku belum cocok dengan cabang di laporan keuangan.
+                  Pilih cabang yang sesuai, lalu klik <strong>Simpan Mapping</strong>.
+                  Preview akan diperbarui otomatis.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {unresolvedBranches.map((poName) => (
+                <div key={poName} className="flex flex-col gap-2 rounded-xl border border-amber-100 bg-amber-50/50 p-3 sm:flex-row sm:items-center">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Nama dari sistem PO</p>
+                    <p className="mt-0.5 text-sm font-bold text-amber-800">{poName}</p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={pendingMappings[poName] || ''}
+                      onChange={(e) => setPendingMappings((prev) => ({ ...prev, [poName]: e.target.value }))}
+                      className="input-field text-sm min-w-[200px]"
+                    >
+                      <option value="">Pilih cabang di laporan keuangan...</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveMapping(poName)}
+                      disabled={!pendingMappings[poName] || savingMappingKey === poName}
+                      className="btn-primary flex items-center gap-1.5 text-sm whitespace-nowrap"
+                    >
+                      {savingMappingKey === poName
+                        ? <><LoadingSpinner className="h-3.5 w-3.5 border-white border-t-transparent" /> Menyimpan...</>
+                        : <><Save className="h-3.5 w-3.5" /> Simpan Mapping</>
+                      }
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       {!pulling && items.length > 0 && (
         <>
           <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -439,6 +569,8 @@ export default function ImportBahanBakuPage() {
                           </div>
                         ) : item.status === 'new' ? (
                           <span className="text-xs font-semibold text-blue-600">Akan disimpan</span>
+                        ) : item.status === 'branch_not_found' ? (
+                          <span className="text-xs font-semibold text-amber-600">↑ Atur mapping di atas</span>
                         ) : (
                           <span className="text-xs text-slate-400">Tidak ada aksi</span>
                         )}
@@ -484,6 +616,12 @@ export default function ImportBahanBakuPage() {
                       </button>
                     </div>
                   )}
+                  {item.status === 'branch_not_found' && (
+                    <p className="mt-2 text-xs font-semibold text-amber-600">
+                      <MapPin className="inline h-3 w-3 mr-1" />
+                      Gunakan panel mapping di atas untuk mencocokkan cabang ini.
+                    </p>
+                  )}
                 </article>
               ))}
             </div>
@@ -511,6 +649,95 @@ export default function ImportBahanBakuPage() {
           <EmptyState title="Belum ada pengeluaran bahan baku" description="Belum ada pengeluaran bahan baku pada periode ini." />
         </section>
       )}
+
+      <section className="card overflow-hidden">
+        <div className="flex flex-col gap-1 border-b border-slate-100 p-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="text-base font-bold text-slate-950">Mapping Cabang Bahan Baku</h3>
+            <p className="text-xs text-slate-500">
+              Daftar pemetaan nama cabang dari sistem purchase order ke cabang di laporan keuangan.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={loadMappings}
+            disabled={mappingsLoading}
+            className="btn-outline mt-2 flex w-full items-center gap-2 text-sm md:mt-0 md:w-auto"
+          >
+            <RefreshCw className={cn('h-4 w-4', mappingsLoading && 'animate-spin')} />
+            Refresh
+          </button>
+        </div>
+
+        {mappingsLoading ? (
+          <PageLoading />
+        ) : existingMappings.length === 0 ? (
+          <EmptyState
+            title="Belum ada mapping cabang"
+            description="Mapping akan muncul di sini setelah Anda menyimpan pemetaan nama cabang dari panel di atas."
+          />
+        ) : (
+          <>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full table-auto">
+                <thead>
+                  <tr>
+                    <th className="table-header">Nama di Sistem PO</th>
+                    <th className="table-header">Cabang di Laporan Keuangan</th>
+                    <th className="table-header w-[80px] text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {existingMappings.map((mapping) => (
+                    <tr key={mapping.id} className="hover:bg-slate-50">
+                      <td className="table-cell font-semibold text-amber-800">{mapping.po_name}</td>
+                      <td className="table-cell font-medium text-slate-900">
+                        {mapping.branch?.name || mapping.branch_id}
+                      </td>
+                      <td className="table-cell text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMapping(mapping.po_name)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Hapus mapping"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 p-3 md:hidden">
+              {existingMappings.map((mapping) => (
+                <article key={mapping.id} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-400">Dari sistem PO</p>
+                      <p className="font-bold text-amber-800">{mapping.po_name}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteMapping(mapping.po_name)}
+                      className="p-2 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 text-sm">
+                    <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                    <span className="font-semibold text-slate-900">
+                      {mapping.branch?.name || mapping.branch_id}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="card overflow-hidden">
         <div className="flex flex-col gap-1 border-b border-slate-100 p-4 md:flex-row md:items-center md:justify-between">

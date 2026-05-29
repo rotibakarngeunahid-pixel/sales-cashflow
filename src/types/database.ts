@@ -189,6 +189,16 @@ export interface KasirSyncQueueItem {
   pulled_at: string
 }
 
+export interface PoBranchMapping {
+  id: string
+  po_name: string
+  branch_id: string
+  branch?: Pick<Branch, 'id' | 'name'> | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface RawMaterialImportLog {
   id: string
   imported_at: string
@@ -494,6 +504,36 @@ export interface Database {
             columns: ['updated_by']
             isOneToOne: false
             referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      po_branch_mappings: {
+        Row: {
+          id: string
+          po_name: string
+          branch_id: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          po_name: string
+          branch_id: string
+          created_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          po_name?: string
+          branch_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'po_branch_mappings_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
             referencedColumns: ['id']
           }
         ]
