@@ -69,64 +69,61 @@ function ImportTypeLabel({ type }: { type: KasirImportLog['import_type'] }) {
 }
 
 // -----------------------------------------------
-// Ringkasan hasil import
+// Ringkasan hasil import (dengan breakdown detail)
 // -----------------------------------------------
 function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
-  const { sales, expenses } = result
+  const { sales, expenses, salesByBranch, expenseItems, expensesByBranch } = result
 
   return (
-    <section className="card overflow-hidden">
-      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3">
-        <div className="flex items-center gap-2">
-          {result.success
-            ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-            : <AlertTriangle className="h-5 w-5 text-amber-600" />}
-          <h3 className="text-sm font-bold text-slate-950">Hasil Import Data dari POS</h3>
+    <div className="space-y-4">
+      {/* Header status */}
+      <div className={cn(
+        'flex items-start gap-3 rounded-xl border p-4',
+        result.success
+          ? 'border-emerald-200 bg-emerald-50'
+          : 'border-amber-200 bg-amber-50'
+      )}>
+        {result.success
+          ? <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+          : <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />}
+        <div>
+          <p className="text-sm font-bold text-slate-950">Hasil Import Data dari POS</p>
+          <p className="text-xs text-slate-600 mt-0.5">{result.message}</p>
         </div>
-        <p className="mt-0.5 text-xs text-slate-500">{result.message}</p>
       </div>
 
-      <div className="grid grid-cols-1 divide-y divide-slate-100 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-        {/* Sales */}
-        <div className="p-4 space-y-3">
-          <div className="flex items-center gap-2">
+      {/* Ringkasan angka: Penjualan + Kas Keluar */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Penjualan */}
+        <div className="card p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
             <ShoppingCart className="h-4 w-4 text-blue-600" />
             <span className="text-sm font-bold text-slate-950">Penjualan (Tunai &amp; QRIS)</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-blue-50 p-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-blue-50 p-3 text-center">
               <p className="text-xs text-blue-600">Berhasil</p>
               <p className="text-2xl font-extrabold text-blue-700">{sales.totalSuccess}</p>
             </div>
-            <div className="rounded-xl bg-emerald-50 p-3">
-              <p className="text-xs text-emerald-600">Total</p>
-              <p className="text-base font-extrabold text-emerald-700 leading-tight mt-1">
-                {formatRupiah(sales.totalAmount)}
-              </p>
+            <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <p className="text-xs text-slate-500">Dilewati</p>
+              <p className="text-2xl font-extrabold text-slate-500">{sales.totalSkipped}</p>
             </div>
-            {sales.totalSkipped > 0 && (
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Dilewati</p>
-                <p className="text-xl font-extrabold text-slate-500">{sales.totalSkipped}</p>
-              </div>
-            )}
-            {sales.totalFailed > 0 && (
-              <div className="rounded-xl bg-red-50 p-3">
-                <p className="text-xs text-red-600">Gagal</p>
-                <p className="text-xl font-extrabold text-red-700">{sales.totalFailed}</p>
-              </div>
-            )}
+            <div className="rounded-xl bg-red-50 p-3 text-center">
+              <p className="text-xs text-red-500">Gagal</p>
+              <p className="text-2xl font-extrabold text-red-600">{sales.totalFailed}</p>
+            </div>
           </div>
-          {!sales.success && sales.errors.length > 0 && (
+          <div className="rounded-xl bg-emerald-50 px-4 py-3 flex items-center justify-between">
+            <span className="text-xs font-semibold text-emerald-700">Total Pemasukan</span>
+            <span className="text-lg font-extrabold text-emerald-700">{formatRupiah(sales.totalAmount)}</span>
+          </div>
+          {sales.errors.length > 0 && (
             <div className="rounded-xl border border-red-100 bg-red-50 p-3">
               <p className="text-xs font-bold text-red-700 mb-1">Error:</p>
               <ul className="space-y-0.5">
-                {sales.errors.slice(0, 5).map((e, i) => (
-                  <li key={i} className="text-xs text-red-600">• {e}</li>
-                ))}
-                {sales.errors.length > 5 && (
-                  <li className="text-xs text-red-400">...dan {sales.errors.length - 5} error lainnya</li>
-                )}
+                {sales.errors.slice(0, 3).map((e, i) => <li key={i} className="text-xs text-red-600">• {e}</li>)}
+                {sales.errors.length > 3 && <li className="text-xs text-red-400">...+{sales.errors.length - 3} lainnya</li>}
               </ul>
             </div>
           )}
@@ -135,46 +132,36 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
           )}
         </div>
 
-        {/* Expenses */}
-        <div className="p-4 space-y-3">
-          <div className="flex items-center gap-2">
+        {/* Kas Keluar */}
+        <div className="card p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
             <TrendingDown className="h-4 w-4 text-red-600" />
             <span className="text-sm font-bold text-slate-950">Kas Keluar</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-blue-50 p-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-blue-50 p-3 text-center">
               <p className="text-xs text-blue-600">Berhasil</p>
               <p className="text-2xl font-extrabold text-blue-700">{expenses.totalSuccess}</p>
             </div>
-            <div className="rounded-xl bg-red-50 p-3">
-              <p className="text-xs text-red-600">Total</p>
-              <p className="text-base font-extrabold text-red-700 leading-tight mt-1">
-                {formatRupiah(expenses.totalAmount)}
-              </p>
+            <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <p className="text-xs text-slate-500">Dilewati</p>
+              <p className="text-2xl font-extrabold text-slate-500">{expenses.totalSkipped}</p>
             </div>
-            {expenses.totalSkipped > 0 && (
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="text-xs text-slate-500">Dilewati</p>
-                <p className="text-xl font-extrabold text-slate-500">{expenses.totalSkipped}</p>
-              </div>
-            )}
-            {expenses.totalFailed > 0 && (
-              <div className="rounded-xl bg-red-50 p-3">
-                <p className="text-xs text-red-600">Gagal</p>
-                <p className="text-xl font-extrabold text-red-700">{expenses.totalFailed}</p>
-              </div>
-            )}
+            <div className="rounded-xl bg-red-50 p-3 text-center">
+              <p className="text-xs text-red-500">Gagal</p>
+              <p className="text-2xl font-extrabold text-red-600">{expenses.totalFailed}</p>
+            </div>
           </div>
-          {!expenses.success && expenses.errors.length > 0 && (
+          <div className="rounded-xl bg-red-50 px-4 py-3 flex items-center justify-between">
+            <span className="text-xs font-semibold text-red-700">Total Pengeluaran</span>
+            <span className="text-lg font-extrabold text-red-700">{formatRupiah(expenses.totalAmount)}</span>
+          </div>
+          {expenses.errors.length > 0 && (
             <div className="rounded-xl border border-red-100 bg-red-50 p-3">
               <p className="text-xs font-bold text-red-700 mb-1">Error:</p>
               <ul className="space-y-0.5">
-                {expenses.errors.slice(0, 5).map((e, i) => (
-                  <li key={i} className="text-xs text-red-600">• {e}</li>
-                ))}
-                {expenses.errors.length > 5 && (
-                  <li className="text-xs text-red-400">...dan {expenses.errors.length - 5} error lainnya</li>
-                )}
+                {expenses.errors.slice(0, 3).map((e, i) => <li key={i} className="text-xs text-red-600">• {e}</li>)}
+                {expenses.errors.length > 3 && <li className="text-xs text-red-400">...+{expenses.errors.length - 3} lainnya</li>}
               </ul>
             </div>
           )}
@@ -184,16 +171,131 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
         </div>
       </div>
 
-      {/* Total gabungan */}
-      <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+      {/* Tabel detail penjualan per cabang */}
+      {salesByBranch.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-100 bg-blue-50/50 px-4 py-3">
+            <ShoppingCart className="h-4 w-4 text-blue-600" />
+            <h4 className="text-sm font-bold text-slate-950">Rincian Penjualan per Cabang</h4>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[400px]">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Cabang</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Tunai</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">QRIS</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {salesByBranch.map((b) => (
+                  <tr key={b.branchName} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-semibold text-slate-950">{b.branchName}</td>
+                    <td className="px-4 py-2.5 text-right text-green-700">
+                      {b.totalCash > 0 ? formatRupiah(b.totalCash) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-purple-700">
+                      {b.totalQris > 0 ? formatRupiah(b.totalQris) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold text-slate-950">{formatRupiah(b.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {salesByBranch.length > 1 && (
+                <tfoot>
+                  <tr className="border-t border-slate-200 bg-slate-50">
+                    <td className="px-4 py-2.5 text-xs font-bold uppercase text-slate-500">Total</td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-green-700">
+                      {formatRupiah(salesByBranch.reduce((s, b) => s + b.totalCash, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-purple-700">
+                      {formatRupiah(salesByBranch.reduce((s, b) => s + b.totalQris, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-slate-950">
+                      {formatRupiah(salesByBranch.reduce((s, b) => s + b.total, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tabel detail kas keluar */}
+      {expenseItems.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-red-50/50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-red-600" />
+              <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar</h4>
+            </div>
+            {expensesByBranch.length > 1 && (
+              <div className="flex gap-3 text-xs text-slate-500">
+                {expensesByBranch.map((b) => (
+                  <span key={b.branchName}>
+                    <span className="font-semibold text-slate-700">{b.branchName}</span>:{' '}
+                    <span className="font-bold text-red-600">{formatRupiah(b.total)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px]">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Keterangan</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Cabang</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Kategori</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Dicatat</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Nominal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {expenseItems.map((item, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5">
+                      <p className="font-semibold text-slate-950">{item.expenseName}</p>
+                      <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
+                    <td className="px-4 py-2.5">
+                      {item.category
+                        ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
+                        : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-red-600">{formatRupiah(item.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-200 bg-slate-50">
+                  <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase text-slate-500">
+                    Total ({expenseItems.length} item)
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-xs font-bold text-red-700">
+                    {formatRupiah(expenseItems.reduce((s, i) => s + i.amount, 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Footer total gabungan */}
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
           <span className="text-slate-600">
-            Total berhasil:
-            <span className="ml-1 font-extrabold text-blue-700">
+            Total berhasil:{' '}
+            <span className="font-extrabold text-blue-700">
               {sales.totalSuccess + expenses.totalSuccess} item
             </span>
           </span>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-4">
             {sales.totalAmount > 0 && (
               <span className="text-slate-600">
                 Masuk: <span className="font-extrabold text-emerald-700">{formatRupiah(sales.totalAmount)}</span>
@@ -207,7 +309,7 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
           </div>
         </div>
       </div>
-    </section>
+    </div>
   )
 }
 

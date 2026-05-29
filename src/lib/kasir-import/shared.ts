@@ -159,11 +159,30 @@ export interface KasirImportResult {
 
 // ----- Combined import result (penjualan + kas keluar sekaligus) -----
 
+export interface SaleBranchDetail {
+  branchName: string
+  totalCash:  number
+  totalQris:  number
+  total:      number
+}
+
+export interface ExpenseItemDetail {
+  expenseName: string
+  branchName:  string
+  category:    string
+  amount:      number
+  dateWITA:    string
+  recordedBy:  string
+}
+
 export interface CombinedImportResult {
-  success:  boolean
-  sales:    KasirImportResult
-  expenses: KasirImportResult
-  message:  string
+  success:          boolean
+  sales:            KasirImportResult
+  expenses:         KasirImportResult
+  message:          string
+  salesByBranch:    SaleBranchDetail[]
+  expenseItems:     ExpenseItemDetail[]
+  expensesByBranch: Array<{ branchName: string; total: number; count: number }>
 }
 
 // ----- Helpers -----

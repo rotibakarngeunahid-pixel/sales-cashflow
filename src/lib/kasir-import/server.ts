@@ -25,6 +25,8 @@ import {
   type KasirImportResult,
   type MappingTarget,
   type CombinedImportResult,
+  type SaleBranchDetail,
+  type ExpenseItemDetail,
 } from './shared'
 
 type Supabase = SupabaseClient<Database>
@@ -940,7 +942,64 @@ export async function importCombined(
 ): Promise<CombinedImportResult> {
   validateDateRange(params.startDate, params.endDate)
 
-  // Import penjualan dulu, lalu kas keluar (sequential agar tidak overload DB)
+  // Step 1: Ambil preview paralel untuk build detail display
+  let salesByBranch:    SaleBranchDetail[]                                       = []
+  let expenseItems:     ExpenseItemDetail[]                                       = []
+  let expensesByBranch: Array<{ branchName: string; total: number; count: number }> = []
+
+  const [salesPreviewResult, expensesPreviewResult] = await Promise.allSettled([
+    getSalesPreview(supabase, {
+      startDate:     params.startDate,
+      endDate:       params.endDate,
+      branchId:      params.branchId,
+      paymentMethod: 'Tunai+QRIS',
+    }),
+    getExpensesPreview(supabase, {
+      startDate: params.startDate,
+      endDate:   params.endDate,
+      branchId:  params.branchId,
+    }),
+  ])
+
+  if (salesPreviewResult.status === 'fulfilled') {
+    const newItems = salesPreviewResult.value.items.filter((i) => i.status === 'new')
+    const bMap = new Map<string, SaleBranchDetail>()
+    for (const item of newItems) {
+      const b = bMap.get(item.branchName) || { branchName: item.branchName, totalCash: 0, totalQris: 0, total: 0 }
+      if (item.paymentCategory === 'Tunai') b.totalCash += item.amount
+      if (item.paymentCategory === 'QRIS')  b.totalQris += item.amount
+      b.total += item.amount
+      bMap.set(item.branchName, b)
+    }
+    salesByBranch = Array.from(bMap.values()).sort((a, b) => b.total - a.total)
+  }
+
+  if (expensesPreviewResult.status === 'fulfilled') {
+    const newItems = expensesPreviewResult.value.items.filter((i) => i.status === 'new')
+    expenseItems = newItems
+      .map((item) => ({
+        expenseName: item.expenseName,
+        branchName:  item.branchName,
+        category:    item.category,
+        amount:      item.amount,
+        dateWITA:    item.dateWITA,
+        recordedBy:  item.recordedBy,
+      }))
+      .sort((a, b) => a.branchName.localeCompare(b.branchName) || a.dateWITA.localeCompare(b.dateWITA))
+
+    const bMap = new Map<string, { total: number; count: number }>()
+    for (const item of newItems) {
+      const b = bMap.get(item.branchName) || { total: 0, count: 0 }
+      b.total += item.amount
+      b.count += 1
+      bMap.set(item.branchName, b)
+    }
+    expensesByBranch = Array.from(bMap.entries())
+      .map(([branchName, v]) => ({ branchName, ...v }))
+      .sort((a, b) => b.total - a.total)
+  }
+
+  // Step 2: Import penjualan dulu, lalu kas keluar (sequential)
   let salesResult: KasirImportResult
   let expensesResult: KasirImportResult
 
@@ -958,11 +1017,11 @@ export async function importCombined(
 
   try {
     expensesResult = await importExpenses(supabase, {
-      startDate:  params.startDate,
-      endDate:    params.endDate,
-      branchId:   params.branchId,
-      userId:     params.userId,
-      mappings:   undefined, // gunakan mapping default (outlet asal)
+      startDate: params.startDate,
+      endDate:   params.endDate,
+      branchId:  params.branchId,
+      userId:    params.userId,
+      mappings:  undefined,
     })
   } catch (err) {
     expensesResult = makeFailedResult(err, 'Gagal mengimport data kas keluar dari sistem kasir.')
@@ -976,6 +1035,9 @@ export async function importCombined(
     sales:    salesResult,
     expenses: expensesResult,
     message,
+    salesByBranch,
+    expenseItems,
+    expensesByBranch,
   }
 }
 
