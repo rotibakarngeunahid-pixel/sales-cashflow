@@ -392,7 +392,7 @@ export default function KasirImportPage() {
       }
 
       setImportResult(json.result!)
-      invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|dashboard:)/)
+      invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
       await loadLogs()
     } catch {
       setError('Gagal mengirim permintaan ke server. Periksa koneksi dan coba lagi.')

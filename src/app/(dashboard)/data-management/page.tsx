@@ -19,6 +19,7 @@ import {
   FileText,
   Wallet,
   Package,
+  RefreshCw,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -31,7 +32,10 @@ interface PreviewData {
   cashflowManual: number
   cashflowFromSales: number
   cashflowFromImport: number
+  cashflowFromKasirSales: number
+  cashflowFromKasirExpenses: number
   rawMaterialLogs: number
+  kasirSyncQueueItems: number
   grandTotal: number
 }
 
@@ -39,6 +43,7 @@ interface DeleteResult {
   salesReports: number
   cashflowTransactions: number
   rawMaterialLogs: number
+  kasirSyncQueueItems: number
   errors: string[]
 }
 
@@ -125,7 +130,10 @@ export default function DataManagementPage() {
       { count: cfManual },
       { count: cfSales },
       { count: cfImport },
+      { count: cfKasirSales },
+      { count: cfKasirExpenses },
       { count: rawCount },
+      { count: kasirSyncCount },
     ] = await Promise.all([
       // Sales reports
       supabase
@@ -165,12 +173,36 @@ export default function DataManagementPage() {
         .lte('transaction_date', endDate)
         .eq('source', 'purchase_order'),
 
+      // Cashflow from Kasir sales import/sync
+      supabase
+        .from('cashflow_transactions')
+        .select('*', { count: 'exact', head: true })
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
+        .eq('source', 'kasir_sales'),
+
+      // Cashflow from Kasir expense import/sync
+      supabase
+        .from('cashflow_transactions')
+        .select('*', { count: 'exact', head: true })
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate)
+        .eq('source', 'kasir_expenses'),
+
       // Raw material import logs
       supabase
         .from('raw_material_import_logs')
         .select('*', { count: 'exact', head: true })
         .gte('imported_at', startDate)
         .lt('imported_at', endDateNextDay),
+
+      // Confirmed Kasir sync queue is used as fallback in sales analysis.
+      supabase
+        .from('kasir_sync_queue')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'confirmed')
+        .gte('tanggal', startDate)
+        .lte('tanggal', endDate),
     ])
 
     setPreviewData({
@@ -179,8 +211,11 @@ export default function DataManagementPage() {
       cashflowManual: cfManual ?? 0,
       cashflowFromSales: cfSales ?? 0,
       cashflowFromImport: cfImport ?? 0,
+      cashflowFromKasirSales: cfKasirSales ?? 0,
+      cashflowFromKasirExpenses: cfKasirExpenses ?? 0,
       rawMaterialLogs: rawCount ?? 0,
-      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0),
+      kasirSyncQueueItems: kasirSyncCount ?? 0,
+      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0) + (kasirSyncCount ?? 0),
     })
 
     setLoading(false)
@@ -204,6 +239,7 @@ export default function DataManagementPage() {
       salesReports: 0,
       cashflowTransactions: 0,
       rawMaterialLogs: 0,
+      kasirSyncQueueItems: 0,
       errors: [],
     }
 
@@ -305,7 +341,31 @@ export default function DataManagementPage() {
       }
     }
 
-    // ── STEP 7: Write audit log ────────────────────────────────────────────
+    // STEP 7: Disable confirmed Kasir sync queue rows.
+    // Legacy sales analysis can use these rows as fallback totals.
+    const { data: disabledKasirSync, error: kasirSyncErr } = await supabase
+      .from('kasir_sync_queue')
+      .update({
+        status: 'rejected',
+        confirmed_at: null,
+        confirmed_by: null,
+        rejected_at: now,
+        rejected_by: user?.id ?? null,
+        reject_reason: `Dibatalkan otomatis oleh Manajemen Data untuk periode ${startDate} s/d ${endDate}.`,
+        cashflow_transaction_id: null,
+      })
+      .eq('status', 'confirmed')
+      .gte('tanggal', startDate)
+      .lte('tanggal', endDate)
+      .select('id')
+
+    if (kasirSyncErr) {
+      result.errors.push(`Gagal menonaktifkan sync kasir terkonfirmasi: ${kasirSyncErr.message}`)
+    } else {
+      result.kasirSyncQueueItems = (disabledKasirSync ?? []).length
+    }
+
+    // STEP 8: Write audit log
     await supabase.from('audit_logs').insert({
       table_name: 'bulk_data_delete',
       record_id: null,
@@ -318,6 +378,7 @@ export default function DataManagementPage() {
           sales_reports: result.salesReports,
           cashflow_transactions: result.cashflowTransactions,
           raw_material_import_logs: result.rawMaterialLogs,
+          kasir_sync_queue_items_disabled: result.kasirSyncQueueItems,
         },
         errors: result.errors,
       } as Record<string, unknown>,
@@ -325,9 +386,9 @@ export default function DataManagementPage() {
       changed_at: now,
     })
 
-    // ── STEP 8: Invalidate client-side caches ──────────────────────────────
+    // STEP 9: Invalidate client-side caches
     invalidateCachedData(
-      /^(cashflow:|cash-positions:|dashboard:|sales-reports:|dashboard-today:|sales-report-status:)/
+      /^(cashflow:|cash-positions:|cashflow-analysis:|dashboard:|sales-reports:|sales-analysis:|dashboard-today:|sales-report-status:)/
     )
 
     setDeleteResult(result)
@@ -349,7 +410,8 @@ export default function DataManagementPage() {
   const totalDeleted =
     (deleteResult?.salesReports ?? 0) +
     (deleteResult?.cashflowTransactions ?? 0) +
-    (deleteResult?.rawMaterialLogs ?? 0)
+    (deleteResult?.rawMaterialLogs ?? 0) +
+    (deleteResult?.kasirSyncQueueItems ?? 0)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -372,7 +434,7 @@ export default function DataManagementPage() {
             <div className="text-sm text-amber-800">
               <p className="font-semibold mb-1">Perhatian!</p>
               <p>
-                Fitur ini menghapus data transaksi secara <strong>permanen</strong>.
+                Fitur ini menghapus data transaksi secara <strong>permanen</strong> dan menonaktifkan sync kasir terkait.
                 Data yang sudah dihapus <strong>tidak dapat dikembalikan</strong>.
                 Master data (cabang, staff, kategori, dll) tidak akan ikut terhapus.
               </p>
@@ -430,11 +492,15 @@ export default function DataManagementPage() {
                 </li>
                 <li className="flex items-center gap-2">
                   <Wallet className="w-4 h-4 flex-shrink-0" />
-                  Transaksi Cashflow — manual, dari sales, dari impor bahan baku
+                  Transaksi Cashflow - manual, sales, bahan baku, import/sync kasir
                 </li>
                 <li className="flex items-center gap-2">
                   <Package className="w-4 h-4 flex-shrink-0" />
                   Log Impor Bahan Baku (raw_material_import_logs)
+                </li>
+                <li className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 flex-shrink-0" />
+                  Sync Kasir terkonfirmasi akan dinonaktifkan agar tidak masuk total kas
                 </li>
               </ul>
             </div>
@@ -541,17 +607,25 @@ export default function DataManagementPage() {
                   {previewData.cashflowTotal > 0 && (
                     <div className="pl-8 text-xs text-slate-500 space-y-0.5">
                       <p>
-                        ↳ Manual:{' '}
+                        Manual:{' '}
                         <span className="font-medium text-slate-700">
                           {previewData.cashflowManual.toLocaleString('id')}
                         </span>
-                        &nbsp;·&nbsp; Dari Sales:{' '}
+                        &nbsp;|&nbsp; Sales:{' '}
                         <span className="font-medium text-slate-700">
                           {previewData.cashflowFromSales.toLocaleString('id')}
                         </span>
-                        &nbsp;·&nbsp; Dari Import Bahan Baku:{' '}
+                        &nbsp;|&nbsp; Bahan Baku:{' '}
                         <span className="font-medium text-slate-700">
                           {previewData.cashflowFromImport.toLocaleString('id')}
+                        </span>
+                        &nbsp;|&nbsp; Kasir Sales:{' '}
+                        <span className="font-medium text-slate-700">
+                          {previewData.cashflowFromKasirSales.toLocaleString('id')}
+                        </span>
+                        &nbsp;|&nbsp; Kasir Kas Keluar:{' '}
+                        <span className="font-medium text-slate-700">
+                          {previewData.cashflowFromKasirExpenses.toLocaleString('id')}
                         </span>
                       </p>
                     </div>
@@ -572,9 +646,23 @@ export default function DataManagementPage() {
                   </span>
                 </div>
 
+                {/* Kasir Sync Queue */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-5 h-5 text-sky-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">Sync Kasir Terkonfirmasi</p>
+                      <p className="text-xs text-slate-500">kasir_sync_queue</p>
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border border-slate-200">
+                    {previewData.kasirSyncQueueItems.toLocaleString('id')} data
+                  </span>
+                </div>
+
                 {/* Grand Total */}
                 <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-xl">
-                  <p className="text-sm font-bold text-red-800">Total Data yang Akan Dihapus</p>
+                  <p className="text-sm font-bold text-red-800">Total Data yang Akan Diproses</p>
                   <span className="text-sm font-bold text-red-800 bg-white px-3 py-1 rounded-lg border border-red-200">
                     {previewData.grandTotal.toLocaleString('id')} data
                   </span>
@@ -588,8 +676,8 @@ export default function DataManagementPage() {
                   <p className="font-semibold">Data yang dihapus TIDAK DAPAT dikembalikan!</p>
                   <p className="mt-1">
                     Pastikan Anda sudah mengekspor data yang diperlukan sebelum melanjutkan.
-                    Proses ini akan menghapus{' '}
-                    <strong>{previewData.grandTotal.toLocaleString('id')} record</strong> secara permanen.
+                    Proses ini akan menghapus atau menonaktifkan{' '}
+                    <strong>{previewData.grandTotal.toLocaleString('id')} record</strong> yang terdampak.
                   </p>
                 </div>
               </div>
@@ -627,7 +715,7 @@ export default function DataManagementPage() {
           <div className="p-4 bg-red-50 border-2 border-red-300 rounded-xl text-sm text-red-800 space-y-3">
             <p className="font-bold text-base">⚠️ PERINGATAN TERAKHIR</p>
             <p>
-              Anda akan menghapus{' '}
+              Anda akan menghapus atau menonaktifkan{' '}
               <strong>{previewData.grandTotal.toLocaleString('id')} record</strong> untuk
               periode:
             </p>
@@ -638,6 +726,7 @@ export default function DataManagementPage() {
               <li>{previewData.salesReports.toLocaleString('id')} laporan penjualan</li>
               <li>{previewData.cashflowTotal.toLocaleString('id')} transaksi cashflow</li>
               <li>{previewData.rawMaterialLogs.toLocaleString('id')} log impor bahan baku</li>
+              <li>{previewData.kasirSyncQueueItems.toLocaleString('id')} sync kasir terkonfirmasi</li>
             </ul>
             <p className="font-semibold">Tindakan ini TIDAK BISA DIBATALKAN.</p>
           </div>
@@ -761,8 +850,18 @@ export default function DataManagementPage() {
               </span>
             </div>
 
+            <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="w-4 h-4 text-sky-500" />
+                <span className="text-sm text-slate-700">Sync Kasir Terkonfirmasi</span>
+              </div>
+              <span className="text-sm font-bold text-slate-900">
+                {deleteResult.kasirSyncQueueItems.toLocaleString('id')} dinonaktifkan
+              </span>
+            </div>
+
             <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-              <span className="text-sm font-bold text-emerald-800">Total Data Dihapus</span>
+              <span className="text-sm font-bold text-emerald-800">Total Data Diproses</span>
               <span className="text-sm font-bold text-emerald-800">
                 {totalDeleted.toLocaleString('id')} record
               </span>

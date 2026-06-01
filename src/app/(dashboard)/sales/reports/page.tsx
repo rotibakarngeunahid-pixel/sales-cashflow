@@ -196,7 +196,7 @@ export default function SalesReportsPage() {
 
     setActioning(false)
     setActionTarget(null)
-    invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
+    invalidateCachedData(/^(sales-reports:|sales-analysis:|cashflow:|cash-positions:|cashflow-analysis:|dashboard:|dashboard-today:|sales-report-status:)/)
 
     const successMsg = actionTarget.type === 'post'
       ? 'Laporan berhasil diposting! Data masuk ke cashflow.'
@@ -262,7 +262,7 @@ export default function SalesReportsPage() {
     setDeleting(false)
     setDeleteTarget(null)
     setDeleteReason('')
-    invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:|cashflow:|cash-positions:)/)
+    invalidateCachedData(/^(sales-reports:|sales-analysis:|dashboard:|dashboard-today:|sales-report-status:|cashflow:|cash-positions:|cashflow-analysis:)/)
     toastTimerRef(isVoidDelete ? 'Laporan void berhasil dihapus permanen.' : 'Laporan penjualan berhasil dihapus permanen.', 'success')
     load({ force: true })
   }
@@ -554,7 +554,7 @@ export default function SalesReportsPage() {
           onSuccess={(msg) => {
             setEditModalOpen(false)
             toastTimerRef(msg || 'Perubahan berhasil disimpan.', 'success')
-            invalidateCachedData(/^(sales-reports:|dashboard:|dashboard-today:|sales-report-status:)/)
+            invalidateCachedData(/^(sales-reports:|sales-analysis:|cashflow:|cash-positions:|cashflow-analysis:|dashboard:|dashboard-today:|sales-report-status:)/)
             load({ force: true })
           }}
           onCancel={() => setEditModalOpen(false)}

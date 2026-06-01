@@ -401,7 +401,7 @@ export default function CashflowPage() {
     setSaving(false)
     setModalOpen(false)
     toastTimerRef(editTx ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil ditambahkan.', 'success')
-    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
     load({ force: true })
     loadCashPositions({ force: true })
   }
@@ -436,7 +436,7 @@ export default function CashflowPage() {
     setSaving(false)
     setVoidTarget(null)
     toastTimerRef('Transaksi berhasil divoid.', 'success')
-    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
     load({ force: true })
     loadCashPositions({ force: true })
   }
@@ -493,7 +493,7 @@ export default function CashflowPage() {
     setDeleteTarget(null)
     setDeleteReason('')
     toastTimerRef('Transaksi void berhasil dihapus permanen.', 'success')
-    invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+    invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
     load({ force: true })
     loadCashPositions({ force: true })
   }
@@ -895,7 +895,7 @@ export default function CashflowPage() {
                 changed_at: new Date().toISOString(),
               })
             }
-            invalidateCachedData(/^(cashflow:|cash-positions:|dashboard:)/)
+            invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
             load({ force: true })
             loadCashPositions({ force: true })
             toastTimerRef(
