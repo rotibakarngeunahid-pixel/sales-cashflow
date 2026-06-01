@@ -126,7 +126,7 @@ export default function CashflowPage() {
 
   async function handleExport() {
     const { exportCashflowToExcel } = await import('@/lib/utils/export')
-    exportCashflowToExcel(transactions, { cashPositions, positionAsOfDate: endDate })
+    exportCashflowToExcel(transactions, { cashPositions, positionStartDate: startDate, positionEndDate: endDate })
   }
 
   const today = new Date()
@@ -197,7 +197,7 @@ export default function CashflowPage() {
     if (!lookupsLoaded) return
 
     const supabase = createClient()
-    const cacheKey = `cash-positions:${endDate}:${filterBranch || 'all'}:${branches.map((branch) => branch.id).join(',')}`
+    const cacheKey = `cash-positions:${startDate}:${endDate}:${filterBranch || 'all'}:${branches.map((branch) => branch.id).join(',')}`
     const cached = getCachedData<CashPosition[]>(cacheKey)
 
     if (cached && !options.force) {
@@ -211,6 +211,7 @@ export default function CashflowPage() {
           .from('cashflow_transactions')
           .select('branch_id,cash_in,cash_out,branch:branches(id,name)')
           .eq('status', 'active')
+          .gte('transaction_date', startDate)
           .lte('transaction_date', endDate)
 
         if (filterBranch) query = query.eq('branch_id', filterBranch)
@@ -262,7 +263,7 @@ export default function CashflowPage() {
     )
 
     setCashPositions(positions)
-  }, [branches, endDate, filterBranch, lookupsLoaded, toastTimerRef])
+  }, [branches, endDate, filterBranch, lookupsLoaded, startDate, toastTimerRef])
 
   useEffect(() => { loadCashPositions() }, [loadCashPositions])
 
@@ -585,8 +586,8 @@ export default function CashflowPage() {
       <section className="card overflow-hidden">
         <div className="flex flex-col gap-1 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-base font-semibold text-slate-900">Posisi Kas Saat Ini</h3>
-            <p className="text-xs text-slate-500">Posisi sampai {formatDate(endDate)} berdasarkan cashflow aktif.</p>
+            <h3 className="text-base font-semibold text-slate-900">Posisi Kas Periode</h3>
+            <p className="text-xs text-slate-500">Posisi {formatDate(startDate)} - {formatDate(endDate)} berdasarkan cashflow aktif.</p>
           </div>
           <span className="text-xs font-medium text-slate-500">{cashPositions.length} cabang</span>
         </div>

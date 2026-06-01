@@ -426,6 +426,7 @@ export default function CashflowAnalysisPage() {
             .from('cashflow_transactions')
             .select('branch_id,cash_in,cash_out,branch:branches(id,name)')
             .eq('status', 'active')
+            .gte('transaction_date', startDate)
             .lte('transaction_date', endDate)
 
           if (filterBranch) {

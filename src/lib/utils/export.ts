@@ -14,6 +14,8 @@ type CashflowExportOptions = {
   filename?: string
   cashPositions?: CashPositionExport[]
   positionAsOfDate?: string
+  positionStartDate?: string
+  positionEndDate?: string
 }
 
 export function exportSalesToExcel(data: SalesReport[], filename = 'laporan-penjualan') {
@@ -75,6 +77,8 @@ export function exportCashflowToExcel(
   const filename = typeof options === 'string' ? options : options.filename ?? 'laporan-cashflow'
   const cashPositions = typeof options === 'string' ? [] : options.cashPositions ?? []
   const positionAsOfDate = typeof options === 'string' ? '' : options.positionAsOfDate ?? ''
+  const positionStartDate = typeof options === 'string' ? '' : options.positionStartDate ?? ''
+  const positionEndDate = typeof options === 'string' ? '' : options.positionEndDate ?? ''
 
   const rows = data.map((row) => ({
     Tanggal: formatDate(row.transaction_date, 'dd/MM/yyyy'),
@@ -95,7 +99,12 @@ export function exportCashflowToExcel(
 
   if (cashPositions.length > 0) {
     const positionRows = cashPositions.map((row) => ({
-      'Tanggal Acuan': positionAsOfDate ? formatDate(positionAsOfDate, 'dd/MM/yyyy') : '',
+      'Periode Mulai': positionStartDate ? formatDate(positionStartDate, 'dd/MM/yyyy') : '',
+      'Periode Akhir': positionEndDate
+        ? formatDate(positionEndDate, 'dd/MM/yyyy')
+        : positionAsOfDate
+          ? formatDate(positionAsOfDate, 'dd/MM/yyyy')
+          : '',
       Cabang: row.branchName,
       'Total Cash In': row.cashIn,
       'Total Cash Out': row.cashOut,
