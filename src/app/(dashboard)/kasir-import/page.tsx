@@ -8,7 +8,9 @@ import {
   Eye,
   Info,
   RefreshCw,
+  RotateCcw,
   ShoppingCart,
+  Trash2,
   TrendingDown,
   XCircle,
 } from 'lucide-react'
@@ -90,13 +92,21 @@ function CombinedPreviewPanel({
   startDate,
   endDate,
   branchName,
+  excludedExpenseKeys,
+  onToggleExpenseKey,
 }: {
   data: CombinedPreviewResult
   startDate: string
   endDate: string
   branchName?: string
+  excludedExpenseKeys: Set<string>
+  onToggleExpenseKey: (key: string) => void
 }) {
-  const totalNew = data.salesNewCount + data.expensesNewCount
+  const activeExpenseItems = data.expenseItems.filter(
+    (item) => !excludedExpenseKeys.has(item.importKey)
+  )
+  const activeExpensesTotal = activeExpenseItems.reduce((s, i) => s + i.amount, 0)
+  const totalNew = data.salesNewCount + activeExpenseItems.length
   const totalDup = data.salesDupCount + data.expensesDupCount
   const hasNewData = totalNew > 0
 
@@ -178,7 +188,10 @@ function CombinedPreviewPanel({
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-xl bg-blue-50 p-3 text-center">
               <p className="text-xs text-blue-600">Akan Diimport</p>
-              <p className="text-2xl font-extrabold text-blue-700">{data.expensesNewCount}</p>
+              <p className="text-2xl font-extrabold text-blue-700">{activeExpenseItems.length}</p>
+              {excludedExpenseKeys.size > 0 && (
+                <p className="text-[10px] text-slate-400 mt-0.5">{excludedExpenseKeys.size} dihapus</p>
+              )}
             </div>
             <div className="rounded-xl bg-slate-50 p-3 text-center">
               <p className="text-xs text-slate-500">Sudah Ada</p>
@@ -189,10 +202,10 @@ function CombinedPreviewPanel({
               <p className="text-2xl font-extrabold text-amber-600">{data.expensesBranchNotFoundCount}</p>
             </div>
           </div>
-          {data.expensesNewCount > 0 && (
+          {activeExpenseItems.length > 0 && (
             <div className="rounded-xl bg-red-50 px-4 py-3 flex items-center justify-between">
               <span className="text-xs font-semibold text-red-700">Total Akan Diimport</span>
-              <span className="text-lg font-extrabold text-red-700">{formatRupiah(data.expensesTotalAmount)}</span>
+              <span className="text-lg font-extrabold text-red-700">{formatRupiah(activeExpensesTotal)}</span>
             </div>
           )}
           {data.expensesNewCount === 0 && (
@@ -260,20 +273,11 @@ function CombinedPreviewPanel({
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-red-600" />
               <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar</h4>
+              <span className="text-xs text-slate-400">Klik ikon hapus untuk tidak memasukkan transaksi ke catatan</span>
             </div>
-            {data.expensesByBranch.length > 1 && (
-              <div className="flex gap-3 text-xs text-slate-500 flex-wrap">
-                {data.expensesByBranch.map((b) => (
-                  <span key={b.branchName}>
-                    <span className="font-semibold text-slate-700">{b.branchName}</span>:{' '}
-                    <span className="font-bold text-red-600">{formatRupiah(b.total)}</span>
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px]">
+            <table className="w-full min-w-[540px]">
               <thead>
                 <tr className="border-b border-slate-100">
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Keterangan</th>
@@ -281,34 +285,57 @@ function CombinedPreviewPanel({
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Kategori</th>
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Dicatat</th>
                   <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Nominal</th>
+                  <th className="px-4 py-2.5 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {data.expenseItems.map((item, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="px-4 py-2.5">
-                      <p className="font-semibold text-slate-950">{item.expenseName}</p>
-                      <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
-                    </td>
-                    <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
-                    <td className="px-4 py-2.5">
-                      {item.category
-                        ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
-                        : <span className="text-slate-300 text-xs">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-red-600">{formatRupiah(item.amount)}</td>
-                  </tr>
-                ))}
+                {data.expenseItems.map((item) => {
+                  const isExcluded = excludedExpenseKeys.has(item.importKey)
+                  return (
+                    <tr key={item.importKey} className={cn('transition-colors', isExcluded ? 'bg-slate-50 opacity-50' : 'hover:bg-slate-50')}>
+                      <td className="px-4 py-2.5">
+                        <p className={cn('font-semibold', isExcluded ? 'line-through text-slate-400' : 'text-slate-950')}>{item.expenseName}</p>
+                        <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
+                      </td>
+                      <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
+                      <td className="px-4 py-2.5">
+                        {item.category
+                          ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
+                          : <span className="text-slate-300 text-xs">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
+                      <td className={cn('px-4 py-2.5 text-right font-bold', isExcluded ? 'text-slate-300 line-through' : 'text-red-600')}>
+                        {formatRupiah(item.amount)}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => onToggleExpenseKey(item.importKey)}
+                          title={isExcluded ? 'Batalkan hapus — masukkan kembali' : 'Hapus dari import ini'}
+                          className={cn(
+                            'p-1.5 rounded-lg transition-colors',
+                            isExcluded
+                              ? 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700'
+                              : 'text-slate-300 hover:bg-red-50 hover:text-red-500'
+                          )}
+                        >
+                          {isExcluded ? <RotateCcw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t border-slate-200 bg-slate-50">
                   <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase text-slate-500">
-                    Total ({data.expenseItems.length} item)
+                    Total ({activeExpenseItems.length} item
+                    {excludedExpenseKeys.size > 0 && <span className="text-slate-400 font-normal"> · {excludedExpenseKeys.size} dihapus</span>})
                   </td>
                   <td className="px-4 py-2.5 text-right text-xs font-bold text-red-700">
-                    {formatRupiah(data.expenseItems.reduce((s, i) => s + i.amount, 0))}
+                    {formatRupiah(activeExpensesTotal)}
                   </td>
+                  <td />
                 </tr>
               </tfoot>
             </table>
@@ -330,9 +357,9 @@ function CombinedPreviewPanel({
                   Masuk: <span className="font-extrabold text-emerald-700">{formatRupiah(data.salesTotalAmount)}</span>
                 </span>
               )}
-              {data.expensesTotalAmount > 0 && (
+              {activeExpensesTotal > 0 && (
                 <span className="text-slate-600">
-                  Keluar: <span className="font-extrabold text-red-700">{formatRupiah(data.expensesTotalAmount)}</span>
+                  Keluar: <span className="font-extrabold text-red-700">{formatRupiah(activeExpensesTotal)}</span>
                 </span>
               )}
             </div>
@@ -598,10 +625,11 @@ export default function KasirImportPage() {
   const [branchId,  setBranchId]  = useState('')
   const [branches,  setBranches]  = useState<Pick<Branch, 'id' | 'name'>[]>([])
 
-  const [pageState,    setPageState]    = useState<PageState>('form')
-  const [error,        setError]        = useState<string | null>(null)
-  const [previewData,  setPreviewData]  = useState<CombinedPreviewResult | null>(null)
-  const [importResult, setImportResult] = useState<CombinedImportResult | null>(null)
+  const [pageState,            setPageState]            = useState<PageState>('form')
+  const [error,                setError]                = useState<string | null>(null)
+  const [previewData,          setPreviewData]          = useState<CombinedPreviewResult | null>(null)
+  const [importResult,         setImportResult]         = useState<CombinedImportResult | null>(null)
+  const [excludedExpenseKeys,  setExcludedExpenseKeys]  = useState<Set<string>>(new Set())
 
   const [logs,        setLogs]        = useState<KasirImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
@@ -696,9 +724,12 @@ export default function KasirImportPage() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          start_date: startDate,
-          end_date:   endDate,
-          branch_id:  branchId || undefined,
+          start_date:            startDate,
+          end_date:              endDate,
+          branch_id:             branchId || undefined,
+          excluded_expense_keys: excludedExpenseKeys.size > 0
+            ? Array.from(excludedExpenseKeys)
+            : undefined,
         }),
       })
       const json = await res.json() as ApiImportResponse
@@ -726,17 +757,31 @@ export default function KasirImportPage() {
     }
   }
 
+  // ----- Toggle exclude expense -----
+  function toggleExcludeExpense(importKey: string) {
+    setExcludedExpenseKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(importKey)) next.delete(importKey)
+      else next.add(importKey)
+      return next
+    })
+  }
+
   // ----- Reset ke form -----
   function handleReset() {
     setPageState('form')
     setPreviewData(null)
     setImportResult(null)
     setError(null)
+    setExcludedExpenseKeys(new Set())
   }
 
   const selectedBranch = branches.find((b) => b.id === branchId)
+  const activeExpenseCount = previewData
+    ? previewData.expenseItems.filter((i) => !excludedExpenseKeys.has(i.importKey)).length
+    : 0
   const hasNewData = previewData
-    ? (previewData.salesNewCount + previewData.expensesNewCount) > 0
+    ? (previewData.salesNewCount + activeExpenseCount) > 0
     : false
 
   return (
@@ -841,13 +886,15 @@ export default function KasirImportPage() {
             startDate={startDate}
             endDate={endDate}
             branchName={selectedBranch?.name}
+            excludedExpenseKeys={excludedExpenseKeys}
+            onToggleExpenseKey={toggleExcludeExpense}
           />
 
           {/* Action buttons */}
           <div className="card p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
             <p className="text-sm text-slate-600">
               {hasNewData
-                ? <><span className="font-bold text-blue-700">{previewData.salesNewCount + previewData.expensesNewCount} item</span> siap diimport ke laporan keuangan.</>
+                ? <><span className="font-bold text-blue-700">{previewData.salesNewCount + activeExpenseCount} item</span> siap diimport ke laporan keuangan.</>
                 : <span className="text-amber-600 font-medium">Tidak ada data baru untuk diimport.</span>
               }
             </p>

@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     start_date: string
     end_date:   string
     branch_id?: string
+    excluded_expense_keys?: string[]
   }
 
   try {
@@ -39,10 +40,11 @@ export async function POST(request: Request) {
 
   try {
     const result = await importCombined(supabase, {
-      startDate: body.start_date,
-      endDate:   body.end_date,
-      branchId:  body.branch_id,
-      userId:    user.id,
+      startDate:            body.start_date,
+      endDate:              body.end_date,
+      branchId:             body.branch_id,
+      userId:               user.id,
+      excludedExpenseKeys:  body.excluded_expense_keys,
     })
     return NextResponse.json({ success: result.success, result })
   } catch (err) {

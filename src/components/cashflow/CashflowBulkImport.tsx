@@ -8,6 +8,8 @@ import {
   FileSpreadsheet,
   Info,
   Loader2,
+  RotateCcw,
+  Trash2,
   Upload,
   X,
   XCircle,
@@ -276,6 +278,7 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
   const [parseResult, setParseResult] = useState<CashflowImportParseResult | null>(null)
   const [dbCheck, setDbCheck] = useState<{ existingKeys: string[]; validRows: ParsedCashflowImportRow[] } | null>(null)
   const [checkingDb, setCheckingDb] = useState(false)
+  const [removedRowKeys, setRemovedRowKeys] = useState<Set<string>>(new Set())
   const [showConfirm, setShowConfirm] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -349,7 +352,8 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
       row.rowErrors.every((issue) => issue.severity !== 'error')
     )
     const importableRows = (dbCheck?.validRows ?? rowsWithoutErrors).filter((row) =>
-      row.rowErrors.every((issue) => issue.severity !== 'error')
+      row.rowErrors.every((issue) => issue.severity !== 'error') &&
+      !removedRowKeys.has(row.import_key)
     )
     const cashInTotal = importableRows
       .filter((row) => row.transaction_type === 'cash_in')
@@ -367,7 +371,7 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
       cashInTotal,
       cashOutTotal,
     }
-  }, [dbCheck, parseResult])
+  }, [dbCheck, parseResult, removedRowKeys])
 
   function handleDownloadCsv() {
     downloadBlob(
@@ -429,6 +433,7 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
     setFileName('')
     setParseResult(null)
     setDbCheck(null)
+    setRemovedRowKeys(new Set())
     setImportResult(null)
     setError(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -665,13 +670,22 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
                     <th className="table-header">Deskripsi</th>
                     <th className="table-header text-right">Nominal</th>
                     <th className="table-header">Referensi</th>
+                    <th className="table-header w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {parseResult.rows.map((row, index) => {
                     const hasError = row.rowErrors.some((issue) => issue.severity === 'error')
                     const isDbDup = dbCheck?.existingKeys.includes(row.import_key) ?? false
-                    const rowClass = hasError ? 'bg-red-50/70' : isDbDup ? 'bg-slate-50 text-slate-400' : ''
+                    const isRemoved = removedRowKeys.has(row.import_key)
+                    const canRemove = !hasError && !isDbDup
+                    const rowClass = hasError
+                      ? 'bg-red-50/70'
+                      : isDbDup
+                        ? 'bg-slate-50 text-slate-400'
+                        : isRemoved
+                          ? 'bg-slate-50 opacity-50'
+                          : ''
 
                     return (
                       <tr key={`${row.sourceRow}-${row.import_key || index}`} className={rowClass}>
@@ -680,17 +694,35 @@ export default function CashflowBulkImport({ onSuccess }: CashflowBulkImportProp
                           <div className="flex items-center gap-1">
                             <RowIssues issues={row.rowErrors} />
                             {isDbDup && <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">DB</span>}
+                            {isRemoved && <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">SKIP</span>}
                           </div>
                         </td>
-                        <td className="table-cell font-semibold">{row.transaction_date || '-'}</td>
+                        <td className={`table-cell font-semibold ${isRemoved ? 'line-through text-slate-400' : ''}`}>{row.transaction_date || '-'}</td>
                         <td className="table-cell">{row.branch_name || '-'}</td>
                         <td className="table-cell">{row.transaction_type === 'cash_in' ? 'Cash In' : 'Cash Out'}</td>
                         <td className="table-cell">{row.category_name || '-'}</td>
-                        <td className="table-cell max-w-[220px] truncate">{row.description || '-'}</td>
-                        <td className={`table-cell text-right font-bold text-rupiah ${row.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
+                        <td className={`table-cell max-w-[220px] truncate ${isRemoved ? 'line-through text-slate-400' : ''}`}>{row.description || '-'}</td>
+                        <td className={`table-cell text-right font-bold text-rupiah ${isRemoved ? 'line-through text-slate-300' : row.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
                           {formatRupiah(row.amount)}
                         </td>
                         <td className="table-cell max-w-[160px] truncate">{row.reference_code || '-'}</td>
+                        <td className="table-cell">
+                          {canRemove && (
+                            <button
+                              type="button"
+                              onClick={() => setRemovedRowKeys((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(row.import_key)) next.delete(row.import_key)
+                                else next.add(row.import_key)
+                                return next
+                              })}
+                              title={isRemoved ? 'Batalkan — masukkan kembali' : 'Hapus dari import ini'}
+                              className={`p-1 rounded transition-colors ${isRemoved ? 'text-emerald-500 hover:bg-emerald-50' : 'text-slate-300 hover:bg-red-50 hover:text-red-500'}`}
+                            >
+                              {isRemoved ? <RotateCcw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}

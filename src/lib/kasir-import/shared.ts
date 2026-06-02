@@ -167,6 +167,7 @@ export interface SaleBranchDetail {
 }
 
 export interface ExpenseItemDetail {
+  importKey:   string
   expenseName: string
   branchName:  string
   category:    string

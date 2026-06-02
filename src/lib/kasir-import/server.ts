@@ -714,6 +714,7 @@ export async function getExpensesPreview(
 export interface ExpensesImportParams extends ExpensesPreviewParams {
   userId: string | null
   mappings?: Record<string, KasirExpenseMappingConfig>
+  excludedKeys?: Set<string>
 }
 
 export async function importExpenses(
@@ -721,7 +722,9 @@ export async function importExpenses(
   params: ExpensesImportParams
 ): Promise<KasirImportResult> {
   const preview  = await getExpensesPreview(supabase, params)
-  const newItems = preview.items.filter((item) => item.status === 'new')
+  const newItems = preview.items.filter((item) =>
+    item.status === 'new' && !params.excludedKeys?.has(item.importKey)
+  )
 
   if (newItems.length === 0) {
     return {
@@ -904,6 +907,7 @@ export interface CombinedImportParams {
   endDate: string
   branchId?: string
   userId: string | null
+  excludedExpenseKeys?: string[]
 }
 
 function makeEmptyResult(message: string): KasirImportResult {
@@ -979,6 +983,7 @@ export async function importCombined(
     const newItems = expensesPreviewResult.value.items.filter((i) => i.status === 'new')
     expenseItems = newItems
       .map((item) => ({
+        importKey:   item.importKey,
         expenseName: item.expenseName,
         branchName:  item.branchName,
         category:    item.category,
@@ -1018,11 +1023,12 @@ export async function importCombined(
 
   try {
     expensesResult = await importExpenses(supabase, {
-      startDate: params.startDate,
-      endDate:   params.endDate,
-      branchId:  params.branchId,
-      userId:    params.userId,
-      mappings:  undefined,
+      startDate:    params.startDate,
+      endDate:      params.endDate,
+      branchId:     params.branchId,
+      userId:       params.userId,
+      mappings:     undefined,
+      excludedKeys: params.excludedExpenseKeys ? new Set(params.excludedExpenseKeys) : undefined,
     })
   } catch (err) {
     expensesResult = makeFailedResult(err, 'Gagal mengimport data kas keluar dari sistem kasir.')
@@ -1124,6 +1130,7 @@ export async function previewCombined(
 
     expenseItems = newItems
       .map((item) => ({
+        importKey:   item.importKey,
         expenseName: item.expenseName,
         branchName:  item.branchName,
         category:    item.category,

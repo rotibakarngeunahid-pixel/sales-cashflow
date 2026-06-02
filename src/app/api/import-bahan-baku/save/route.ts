@@ -52,8 +52,12 @@ export async function POST(request: Request) {
     ) as Record<string, ImportBahanBakuDecision>
     : {}
 
+  const skippedKeys = Array.isArray(record.skipped_keys)
+    ? new Set(record.skipped_keys.filter((k): k is string => typeof k === 'string'))
+    : new Set<string>()
+
   try {
-    const result = await saveImportBahanBaku(supabase, params, user.id, decisions)
+    const result = await saveImportBahanBaku(supabase, params, user.id, decisions, skippedKeys)
     return NextResponse.json({ success: true, result })
   } catch (error) {
     const response = toErrorResponse(error, 'Gagal menyimpan data ke laporan keuangan.')

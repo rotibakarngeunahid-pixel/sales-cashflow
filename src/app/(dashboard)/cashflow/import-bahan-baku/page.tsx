@@ -9,6 +9,7 @@ import {
   Database,
   MapPin,
   RefreshCw,
+  RotateCcw,
   Save,
   Trash2,
   XCircle,
@@ -92,6 +93,7 @@ export default function ImportBahanBakuPage() {
   const [items, setItems] = useState<ImportBahanBakuItem[]>([])
   const [summary, setSummary] = useState<ImportBahanBakuSummary | null>(null)
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
+  const [skippedItems, setSkippedItems] = useState<Set<string>>(new Set())
   const [hasFetched, setHasFetched] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -225,7 +227,8 @@ export default function ImportBahanBakuPage() {
 
   const changedItems = useMemo(() => items.filter((item) => item.status === 'changed'), [items])
   const canSave = items.some((item) => (
-    item.status === 'new' || (item.status === 'changed' && decisions[item.importKey] === 'update')
+    (item.status === 'new' && !skippedItems.has(item.importKey)) ||
+    (item.status === 'changed' && decisions[item.importKey] === 'update')
   ))
 
   const validateDates = useCallback(() => {
@@ -269,6 +272,7 @@ export default function ImportBahanBakuPage() {
       const nextItems = payload.items || []
       setItems(nextItems)
       setSummary(payload.summary || null)
+      setSkippedItems(new Set())
       setDecisions(Object.fromEntries(
         nextItems
           .filter((item) => item.status === 'changed')
@@ -314,6 +318,7 @@ export default function ImportBahanBakuPage() {
           tanggal_akhir: endDate,
           branch_id: branchId || undefined,
           decisions,
+          skipped_keys: skippedItems.size > 0 ? Array.from(skippedItems) : undefined,
         }),
       })
       const payload = await response.json() as ApiSaveResponse
@@ -497,7 +502,7 @@ export default function ImportBahanBakuPage() {
             <div className="card p-4">
               <p className="text-xs font-semibold text-slate-500">Siap Disimpan</p>
               <p className="mt-1 text-xl font-extrabold text-blue-600">
-                {items.filter((item) => item.status === 'new').length + changedItems.filter((item) => decisions[item.importKey] === 'update').length}
+                {items.filter((item) => item.status === 'new' && !skippedItems.has(item.importKey)).length + changedItems.filter((item) => decisions[item.importKey] === 'update').length}
               </p>
             </div>
           </section>
@@ -525,7 +530,7 @@ export default function ImportBahanBakuPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {items.map((item) => (
-                    <tr key={item.importKey} className="hover:bg-slate-50">
+                    <tr key={item.importKey} className={cn('transition-colors', skippedItems.has(item.importKey) ? 'opacity-50 bg-slate-50' : 'hover:bg-slate-50')}>
                       <td className="table-cell font-semibold">{formatPeriod(item)}</td>
                       <td className="table-cell">
                         <div className="truncate">{item.branchName}</div>
@@ -568,7 +573,31 @@ export default function ImportBahanBakuPage() {
                             </button>
                           </div>
                         ) : item.status === 'new' ? (
-                          <span className="text-xs font-semibold text-blue-600">Akan disimpan</span>
+                          <div className="flex items-center gap-2">
+                            {skippedItems.has(item.importKey) ? (
+                              <button
+                                type="button"
+                                onClick={() => setSkippedItems((prev) => { const n = new Set(prev); n.delete(item.importKey); return n })}
+                                className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-emerald-100 hover:text-emerald-700 transition-colors"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Batalkan Lewati
+                              </button>
+                            ) : (
+                              <>
+                                <span className="text-xs font-semibold text-blue-600">Akan disimpan</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setSkippedItems((prev) => new Set(prev).add(item.importKey))}
+                                  className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors"
+                                  title="Lewati — tidak disimpan"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  Lewati
+                                </button>
+                              </>
+                            )}
+                          </div>
                         ) : item.status === 'branch_not_found' ? (
                           <span className="text-xs font-semibold text-amber-600">↑ Atur mapping di atas</span>
                         ) : (
@@ -583,10 +612,10 @@ export default function ImportBahanBakuPage() {
 
             <div className="grid grid-cols-1 gap-3 p-3 lg:hidden">
               {items.map((item) => (
-                <article key={item.importKey} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+                <article key={item.importKey} className={cn('rounded-xl border border-slate-100 bg-white p-3 shadow-sm', skippedItems.has(item.importKey) && 'opacity-50')}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-bold text-slate-950">{item.branchName}</p>
+                      <p className={cn('text-sm font-bold', skippedItems.has(item.importKey) ? 'line-through text-slate-400' : 'text-slate-950')}>{item.branchName}</p>
                       <p className="text-xs text-slate-500">{formatPeriod(item)}</p>
                     </div>
                     <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-xs font-bold', statusClass[item.status])}>
@@ -598,6 +627,29 @@ export default function ImportBahanBakuPage() {
                   </p>
                   <p className="mt-1 text-xs text-slate-500">{formatCount(item.transactionCount)}</p>
                   {item.warning && <p className="mt-2 text-xs font-medium text-amber-700">{item.warning}</p>}
+                  {item.status === 'new' && (
+                    <div className="mt-3">
+                      {skippedItems.has(item.importKey) ? (
+                        <button
+                          type="button"
+                          onClick={() => setSkippedItems((prev) => { const n = new Set(prev); n.delete(item.importKey); return n })}
+                          className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-xs font-bold text-slate-600 w-full justify-center"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Batalkan Lewati
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSkippedItems((prev) => new Set(prev).add(item.importKey))}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 w-full justify-center hover:bg-red-50 hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Lewati (tidak disimpan)
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {item.status === 'changed' && (
                     <div className="mt-3 grid grid-cols-2 gap-2">
                       <button

@@ -224,7 +224,8 @@ export async function saveImportBahanBaku(
   supabase: Supabase,
   params: ImportParams,
   userId: string | null,
-  decisions: Record<string, ImportBahanBakuDecision> = {}
+  decisions: Record<string, ImportBahanBakuDecision> = {},
+  skippedKeys: Set<string> = new Set()
 ): Promise<SaveImportBahanBakuResult> {
   const preview = await getImportBahanBakuPreview(supabase, params)
   const categoryId = await getRawMaterialCategoryId(supabase)
@@ -238,6 +239,11 @@ export async function saveImportBahanBaku(
   for (const item of preview.items) {
     if (!item.branchId) {
       branchMissing += 1
+      continue
+    }
+
+    if (skippedKeys.has(item.importKey)) {
+      skipped += 1
       continue
     }
 

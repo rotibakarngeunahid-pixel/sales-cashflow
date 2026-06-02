@@ -10,6 +10,8 @@ import {
   FileSpreadsheet,
   Info,
   Loader2,
+  RotateCcw,
+  Trash2,
   Upload,
   X,
   XCircle,
@@ -390,6 +392,7 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
   const [checkingDb, setCheckingDb] = useState(false)
 
   // ─ Import state ─
+  const [removedRowDates, setRemovedRowDates] = useState<Set<string>>(new Set())
   const [showConfirm, setShowConfirm] = useState(false)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -446,7 +449,8 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
     )
     const dbDupCount = dbCheck?.existingDates.length ?? 0
     const importableRows = (dbCheck?.validRows ?? rowsWithoutErrors).filter(
-      (r) => r.rowErrors.every((e) => e.severity !== 'error')
+      (r) => r.rowErrors.every((e) => e.severity !== 'error') &&
+             !removedRowDates.has(r.report_date)
     )
     const grandTotal = importableRows.reduce((s, r) => s + r.grand_total_nett_sales, 0)
 
@@ -460,7 +464,7 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
       grandTotal,
       dbDupCount,
     }
-  }, [parseResult, dbCheck])
+  }, [parseResult, dbCheck, removedRowDates])
 
   // ─ Template download ─
   function handleDownloadCsv() {
@@ -518,6 +522,7 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
     setStep('upload')
     setParseResult(null)
     setDbCheck(null)
+    setRemovedRowDates(new Set())
     setFileName('')
     setError(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -865,6 +870,7 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
                     <th className="table-header text-right">SF Nett</th>
                     <th className="table-header text-right font-extrabold">Grand Total</th>
                     <th className="table-header">Catatan</th>
+                    <th className="table-header w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
@@ -873,14 +879,18 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
                     const hasRowWarnings = row.rowErrors.some((e) => e.severity === 'warning')
                     const isDbDup = dbCheck?.existingDates.includes(row.report_date) ?? false
                     const isInternalDup = parseResult.internalDuplicateDates.includes(row.report_date)
+                    const isRemoved = removedRowDates.has(row.report_date)
+                    const canRemove = !hasRowErrors && !isDbDup && !isInternalDup
 
                     const rowBg = hasRowErrors || isInternalDup
                       ? 'bg-red-50/70'
                       : isDbDup
                         ? 'bg-slate-50'
-                        : hasRowWarnings
-                          ? 'bg-amber-50/40'
-                          : ''
+                        : isRemoved
+                          ? 'bg-slate-50 opacity-50'
+                          : hasRowWarnings
+                            ? 'bg-amber-50/40'
+                            : ''
 
                     return (
                       <tr key={`${row.sourceRow}-${row.report_date}`} className={`${rowBg} hover:brightness-95 transition-all`}>
@@ -895,9 +905,14 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
                                 DB
                               </span>
                             )}
+                            {isRemoved && (
+                              <span className="inline-block rounded-full bg-slate-200 px-1.5 py-0.5 text-[9px] font-bold text-slate-500 whitespace-nowrap">
+                                SKIP
+                              </span>
+                            )}
                           </div>
                         </td>
-                        <td className={`table-cell font-semibold ${(hasRowErrors || isInternalDup) ? 'text-red-700' : isDbDup ? 'text-slate-400 line-through' : ''}`}>
+                        <td className={`table-cell font-semibold ${(hasRowErrors || isInternalDup) ? 'text-red-700' : isDbDup || isRemoved ? 'text-slate-400 line-through' : ''}`}>
                           {row.report_date || '—'}
                         </td>
                         <td className="table-cell text-right text-rupiah">{formatRupiah(row.cash)}</td>
@@ -908,10 +923,27 @@ export default function SalesBulkImport({ onSuccess }: SalesBulkImportProps) {
                         <td className="table-cell text-right text-rupiah">{formatRupiah(row.grabfood_nett)}</td>
                         <td className="table-cell text-right text-rupiah">{formatRupiah(row.shopeefood_gross)}</td>
                         <td className="table-cell text-right text-rupiah">{formatRupiah(row.shopeefood_nett)}</td>
-                        <td className={`table-cell text-right font-bold text-rupiah ${isDbDup ? 'text-slate-400' : 'text-rbn-red'}`}>
+                        <td className={`table-cell text-right font-bold text-rupiah ${isDbDup || isRemoved ? 'text-slate-400 line-through' : 'text-rbn-red'}`}>
                           {formatRupiah(row.grand_total_nett_sales)}
                         </td>
                         <td className="table-cell text-slate-500 max-w-[120px] truncate">{row.notes || '—'}</td>
+                        <td className="table-cell">
+                          {canRemove && (
+                            <button
+                              type="button"
+                              onClick={() => setRemovedRowDates((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(row.report_date)) next.delete(row.report_date)
+                                else next.add(row.report_date)
+                                return next
+                              })}
+                              title={isRemoved ? 'Batalkan — masukkan kembali' : 'Hapus dari import ini'}
+                              className={`p-1 rounded transition-colors ${isRemoved ? 'text-emerald-500 hover:bg-emerald-50' : 'text-slate-300 hover:bg-red-50 hover:text-red-500'}`}
+                            >
+                              {isRemoved ? <RotateCcw className="h-3.5 w-3.5" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
