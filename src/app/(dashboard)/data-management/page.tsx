@@ -20,6 +20,7 @@ import {
   Wallet,
   Package,
   RefreshCw,
+  History,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ interface PreviewData {
   cashflowFromKasirExpenses: number
   rawMaterialLogs: number
   kasirSyncQueueItems: number
+  kasirImportLogs: number
   grandTotal: number
 }
 
@@ -44,6 +46,7 @@ interface DeleteResult {
   cashflowTransactions: number
   rawMaterialLogs: number
   kasirSyncQueueItems: number
+  kasirImportLogs: number
   errors: string[]
 }
 
@@ -134,6 +137,7 @@ export default function DataManagementPage() {
       { count: cfKasirExpenses },
       { count: rawCount },
       { count: kasirSyncCount },
+      { count: kasirImportLogsCount },
     ] = await Promise.all([
       // Sales reports
       supabase
@@ -203,6 +207,13 @@ export default function DataManagementPage() {
         .eq('status', 'confirmed')
         .gte('tanggal', startDate)
         .lte('tanggal', endDate),
+
+      // Kasir import logs for the period
+      supabase
+        .from('kasir_import_logs')
+        .select('*', { count: 'exact', head: true })
+        .gte('period_start', startDate)
+        .lte('period_start', endDate),
     ])
 
     setPreviewData({
@@ -215,7 +226,8 @@ export default function DataManagementPage() {
       cashflowFromKasirExpenses: cfKasirExpenses ?? 0,
       rawMaterialLogs: rawCount ?? 0,
       kasirSyncQueueItems: kasirSyncCount ?? 0,
-      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0) + (kasirSyncCount ?? 0),
+      kasirImportLogs: kasirImportLogsCount ?? 0,
+      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0) + (kasirSyncCount ?? 0) + (kasirImportLogsCount ?? 0),
     })
 
     setLoading(false)
@@ -240,6 +252,7 @@ export default function DataManagementPage() {
       cashflowTransactions: 0,
       rawMaterialLogs: 0,
       kasirSyncQueueItems: 0,
+      kasirImportLogs: 0,
       errors: [],
     }
 
@@ -365,7 +378,21 @@ export default function DataManagementPage() {
       result.kasirSyncQueueItems = (disabledKasirSync ?? []).length
     }
 
-    // STEP 8: Write audit log
+    // STEP 8: Delete kasir_import_logs in date range
+    const { data: deletedKasirImportLogs, error: kasirImportLogsErr } = await supabase
+      .from('kasir_import_logs')
+      .delete()
+      .gte('period_start', startDate)
+      .lte('period_start', endDate)
+      .select('id')
+
+    if (kasirImportLogsErr) {
+      result.errors.push(`Gagal hapus riwayat import kasir: ${kasirImportLogsErr.message}`)
+    } else {
+      result.kasirImportLogs = (deletedKasirImportLogs ?? []).length
+    }
+
+    // STEP 9: Write audit log
     await supabase.from('audit_logs').insert({
       table_name: 'bulk_data_delete',
       record_id: null,
@@ -379,6 +406,7 @@ export default function DataManagementPage() {
           cashflow_transactions: result.cashflowTransactions,
           raw_material_import_logs: result.rawMaterialLogs,
           kasir_sync_queue_items_disabled: result.kasirSyncQueueItems,
+          kasir_import_logs: result.kasirImportLogs,
         },
         errors: result.errors,
       } as Record<string, unknown>,
@@ -386,7 +414,7 @@ export default function DataManagementPage() {
       changed_at: now,
     })
 
-    // STEP 9: Invalidate client-side caches
+    // STEP 10: Invalidate client-side caches
     invalidateCachedData(
       /^(cashflow:|cash-positions:|cashflow-analysis:|dashboard:|sales-reports:|sales-analysis:|dashboard-today:|sales-report-status:)/
     )
@@ -411,7 +439,8 @@ export default function DataManagementPage() {
     (deleteResult?.salesReports ?? 0) +
     (deleteResult?.cashflowTransactions ?? 0) +
     (deleteResult?.rawMaterialLogs ?? 0) +
-    (deleteResult?.kasirSyncQueueItems ?? 0)
+    (deleteResult?.kasirSyncQueueItems ?? 0) +
+    (deleteResult?.kasirImportLogs ?? 0)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -497,6 +526,10 @@ export default function DataManagementPage() {
                 <li className="flex items-center gap-2">
                   <Package className="w-4 h-4 flex-shrink-0" />
                   Log Impor Bahan Baku (raw_material_import_logs)
+                </li>
+                <li className="flex items-center gap-2">
+                  <History className="w-4 h-4 flex-shrink-0" />
+                  Riwayat Import Kasir (kasir_import_logs)
                 </li>
                 <li className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 flex-shrink-0" />
@@ -646,6 +679,20 @@ export default function DataManagementPage() {
                   </span>
                 </div>
 
+                {/* Kasir Import Logs */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <History className="w-5 h-5 text-violet-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">Riwayat Import Kasir</p>
+                      <p className="text-xs text-slate-500">kasir_import_logs</p>
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border border-slate-200">
+                    {previewData.kasirImportLogs.toLocaleString('id')} data
+                  </span>
+                </div>
+
                 {/* Kasir Sync Queue */}
                 <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
                   <div className="flex items-center gap-3">
@@ -726,6 +773,7 @@ export default function DataManagementPage() {
               <li>{previewData.salesReports.toLocaleString('id')} laporan penjualan</li>
               <li>{previewData.cashflowTotal.toLocaleString('id')} transaksi cashflow</li>
               <li>{previewData.rawMaterialLogs.toLocaleString('id')} log impor bahan baku</li>
+              <li>{previewData.kasirImportLogs.toLocaleString('id')} riwayat import kasir</li>
               <li>{previewData.kasirSyncQueueItems.toLocaleString('id')} sync kasir terkonfirmasi</li>
             </ul>
             <p className="font-semibold">Tindakan ini TIDAK BISA DIBATALKAN.</p>
@@ -847,6 +895,16 @@ export default function DataManagementPage() {
               </div>
               <span className="text-sm font-bold text-slate-900">
                 {deleteResult.rawMaterialLogs.toLocaleString('id')} dihapus
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl">
+              <div className="flex items-center gap-2">
+                <History className="w-4 h-4 text-violet-500" />
+                <span className="text-sm text-slate-700">Riwayat Import Kasir</span>
+              </div>
+              <span className="text-sm font-bold text-slate-900">
+                {deleteResult.kasirImportLogs.toLocaleString('id')} dihapus
               </span>
             </div>
 
