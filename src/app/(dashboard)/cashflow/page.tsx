@@ -84,6 +84,22 @@ function CashflowSourceLabel({ tx }: { tx: CashflowTransaction }) {
     )
   }
 
+  if (tx.source === 'beban_transfer') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Transfer Beban
+      </span>
+    )
+  }
+
+  if (tx.source === 'kasir_sales' || tx.source === 'kasir_expenses') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Import POS
+      </span>
+    )
+  }
+
   if (tx.source_label) {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full">

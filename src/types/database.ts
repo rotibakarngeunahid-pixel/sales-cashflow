@@ -4,7 +4,7 @@ export type KasirSyncItemStatus = 'pending' | 'confirmed' | 'rejected'
 export type KasirSyncItemType = 'penjualan' | 'kas_keluar'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer'
 
 export type KasirImportType = 'sales' | 'expenses'
 export type KasirImportStatus = 'success' | 'failed' | 'partial'
@@ -197,6 +197,21 @@ export interface PoBranchMapping {
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+export interface BebanTransfer {
+  id: string
+  transfer_date: string
+  from_branch_id: string
+  from_branch?: Pick<Branch, 'id' | 'name'> | null
+  to_branch_id: string
+  to_branch?: Pick<Branch, 'id' | 'name'> | null
+  amount: number
+  description: string | null
+  reference_group_id: string
+  created_by: string | null
+  created_at: string
+  actor?: Pick<Profile, 'full_name' | 'email'> | null
 }
 
 export interface RawMaterialImportLog {
@@ -532,6 +547,45 @@ export interface Database {
           {
             foreignKeyName: 'po_branch_mappings_branch_id_fkey'
             columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      beban_transfers: {
+        Row: {
+          id: string
+          transfer_date: string
+          from_branch_id: string
+          to_branch_id: string
+          amount: number
+          description: string | null
+          reference_group_id: string
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          transfer_date: string
+          from_branch_id: string
+          to_branch_id: string
+          amount: number
+          description?: string | null
+          reference_group_id: string
+          created_by?: string | null
+        }
+        Update: never
+        Relationships: [
+          {
+            foreignKeyName: 'beban_transfers_from_branch_id_fkey'
+            columns: ['from_branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'beban_transfers_to_branch_id_fkey'
+            columns: ['to_branch_id']
             isOneToOne: false
             referencedRelation: 'branches'
             referencedColumns: ['id']
