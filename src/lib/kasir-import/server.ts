@@ -980,7 +980,10 @@ export async function importCombined(
   }
 
   if (expensesPreviewResult.status === 'fulfilled') {
-    const newItems = expensesPreviewResult.value.items.filter((i) => i.status === 'new')
+    const excludedSet = params.excludedExpenseKeys ? new Set(params.excludedExpenseKeys) : null
+    const newItems = expensesPreviewResult.value.items.filter((i) =>
+      i.status === 'new' && !excludedSet?.has(i.importKey)
+    )
     expenseItems = newItems
       .map((item) => ({
         importKey:   item.importKey,
