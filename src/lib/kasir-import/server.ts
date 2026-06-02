@@ -293,10 +293,35 @@ async function loadLocalBranches(supabase: Supabase): Promise<LocalBranch[]> {
   return data || []
 }
 
-function matchBranch(kasirName: string, branches: LocalBranch[]): LocalBranch | null {
+async function loadKasirMappings(supabase: Supabase): Promise<Map<string, string>> {
+  const { data } = await supabase
+    .from('kasir_branch_mappings')
+    .select('kasir_name,branch_id')
+
+  const map = new Map<string, string>()
+  for (const row of data || []) {
+    map.set(row.kasir_name, row.branch_id)
+  }
+  return map
+}
+
+function matchBranch(
+  kasirName: string,
+  branches: LocalBranch[],
+  mappings?: Map<string, string>
+): LocalBranch | null {
+  // 1. Cek mapping manual terlebih dahulu (prioritas tertinggi)
+  if (mappings?.has(kasirName)) {
+    const branchId = mappings.get(kasirName)!
+    return branches.find((b) => b.id === branchId) ?? null
+  }
+
+  // 2. Exact match setelah normalisasi
   const normalized = normalizeBranchName(kasirName)
   const exact = branches.find((b) => normalizeBranchName(b.name) === normalized)
   if (exact) return exact
+
+  // 3. Partial match
   const partial = branches.find(
     (b) => normalized.includes(normalizeBranchName(b.name)) ||
            normalizeBranchName(b.name).includes(normalized)
@@ -388,12 +413,13 @@ export async function getSalesPreview(
 ): Promise<KasirSalePreviewPayload> {
   validateDateRange(params.startDate, params.endDate)
 
-  const [rawData, branches] = await Promise.all([
+  const [rawData, branches, mappings] = await Promise.all([
     callKasirRpc('get_sales_integration', {
       p_date_from: params.startDate,
       p_date_to:   params.endDate,
     }),
     loadLocalBranches(supabase),
+    loadKasirMappings(supabase),
   ])
 
   if (rawData.length === 0) {
@@ -421,7 +447,7 @@ export async function getSalesPreview(
 
   const branchFiltered = params.branchId
     ? filtered.filter((item) => {
-        const matched = matchBranch(item.branchName, branches)
+        const matched = matchBranch(item.branchName, branches, mappings)
         return matched?.id === params.branchId
       })
     : filtered
@@ -441,7 +467,7 @@ export async function getSalesPreview(
 
   const items: KasirSalePreviewItem[] = branchFiltered.map((item) => {
     const importKey     = makeSaleImportKey(item.branchName, item.transactionId)
-    const matchedBranch = matchBranch(item.branchName, branches)
+    const matchedBranch = matchBranch(item.branchName, branches, mappings)
     const isDuplicate   = existingKeys.has(importKey)
 
     let status: KasirSalePreviewItem['status']
@@ -623,13 +649,14 @@ export async function getExpensesPreview(
 ): Promise<KasirExpensePreviewPayload> {
   validateDateRange(params.startDate, params.endDate)
 
-  const [rawData, branches, categories] = await Promise.all([
+  const [rawData, branches, categories, mappings] = await Promise.all([
     callKasirRpc('get_kas_keluar_integration', {
       p_date_from: params.startDate,
       p_date_to:   params.endDate,
     }),
     loadLocalBranches(supabase),
     loadLocalCategories(supabase),
+    loadKasirMappings(supabase),
   ])
 
   if (rawData.length === 0) {
@@ -658,7 +685,7 @@ export async function getExpensesPreview(
   const voidCount = normalized.length - nonVoid.length
 
   const branchFiltered = params.branchId
-    ? nonVoid.filter((item) => matchBranch(item.branchName, branches)?.id === params.branchId)
+    ? nonVoid.filter((item) => matchBranch(item.branchName, branches, mappings)?.id === params.branchId)
     : nonVoid
 
   if (branchFiltered.length === 0 && nonVoid.length > 0) {
@@ -674,7 +701,7 @@ export async function getExpensesPreview(
 
   const items: KasirExpensePreviewItem[] = branchFiltered.map((item) => {
     const importKey       = makeExpenseImportKey(item.branchName, item.expenseId)
-    const matchedBranch   = matchBranch(item.branchName, branches)
+    const matchedBranch   = matchBranch(item.branchName, branches, mappings)
     const localCategoryId = matchCategory(item.category || item.expenseName, categories, 'cash_out')
     const isDuplicate     = existingKeys.has(importKey)
 

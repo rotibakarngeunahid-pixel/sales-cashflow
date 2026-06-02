@@ -94,6 +94,12 @@ function CombinedPreviewPanel({
   branchName,
   excludedExpenseKeys,
   onToggleExpenseKey,
+  branches,
+  pendingMappings,
+  onPendingMappingChange,
+  savingMappingKey,
+  onSaveMapping,
+  mappingSuccess,
 }: {
   data: CombinedPreviewResult
   startDate: string
@@ -101,6 +107,12 @@ function CombinedPreviewPanel({
   branchName?: string
   excludedExpenseKeys: Set<string>
   onToggleExpenseKey: (key: string) => void
+  branches: Pick<Branch, 'id' | 'name'>[]
+  pendingMappings: Record<string, string>
+  onPendingMappingChange: (kasirName: string, branchId: string) => void
+  savingMappingKey: string | null
+  onSaveMapping: (kasirName: string) => void
+  mappingSuccess: string | null
 }) {
   const activeExpenseItems = data.expenseItems.filter(
     (item) => !excludedExpenseKeys.has(item.importKey)
@@ -214,47 +226,65 @@ function CombinedPreviewPanel({
         </div>
       </div>
 
-      {/* Warning: nama cabang dari kasir tidak dikenali */}
-      {(data.salesUnmatchedBranchNames.length > 0 || data.expensesUnmatchedBranchNames.length > 0) && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-amber-800">
-                Cabang tidak dikenali — data berikut tidak akan diimport
-              </p>
-              <p className="text-xs text-amber-700">
-                Nama cabang di sistem kasir tidak cocok dengan nama cabang di laporan keuangan.
-                Perbaiki dengan menyamakan nama cabang di halaman <strong>Manajemen Cabang</strong>.
-              </p>
+      {/* Panel mapping: nama cabang kasir tidak dikenali */}
+      {(() => {
+        const allUnmatched = Array.from(new Set([
+          ...data.salesUnmatchedBranchNames,
+          ...data.expensesUnmatchedBranchNames,
+        ])).sort()
+        if (allUnmatched.length === 0) return null
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">
+                  Cabang tidak dikenali — data berikut tidak akan diimport
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Nama cabang di sistem kasir tidak cocok dengan cabang di laporan keuangan.
+                  Pilih cabang yang sesuai lalu klik <strong>Simpan Mapping</strong>.
+                  Mapping tersimpan permanen dan akan dipakai di import berikutnya.
+                </p>
+              </div>
+            </div>
+            {mappingSuccess && (
+              <div className="ml-6 flex items-center gap-1.5 text-xs text-emerald-700 font-semibold">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {mappingSuccess}
+              </div>
+            )}
+            <div className="ml-6 space-y-2">
+              {allUnmatched.map((kasirName) => (
+                <div key={kasirName} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="text-xs font-mono bg-amber-100 border border-amber-200 rounded px-2 py-1 text-amber-900 min-w-0 shrink-0">
+                    {kasirName}
+                  </span>
+                  <span className="text-xs text-amber-600 shrink-0">→</span>
+                  <select
+                    className="flex-1 rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    value={pendingMappings[kasirName] ?? ''}
+                    onChange={(e) => onPendingMappingChange(kasirName, e.target.value)}
+                  >
+                    <option value="">Pilih cabang di laporan keuangan...</option>
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!pendingMappings[kasirName] || savingMappingKey === kasirName}
+                    onClick={() => onSaveMapping(kasirName)}
+                    className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-amber-700 transition-colors"
+                  >
+                    {savingMappingKey === kasirName ? 'Menyimpan...' : 'Simpan Mapping'}
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
-          {data.salesUnmatchedBranchNames.length > 0 && (
-            <div className="ml-6 space-y-1">
-              <p className="text-xs font-semibold text-amber-700">Penjualan — nama cabang dari kasir:</p>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {data.salesUnmatchedBranchNames.map((name) => (
-                  <span key={name} className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {data.expensesUnmatchedBranchNames.length > 0 && (
-            <div className="ml-6 space-y-1">
-              <p className="text-xs font-semibold text-amber-700">Kas Keluar — nama cabang dari kasir:</p>
-              <div className="flex flex-wrap gap-1 mt-1">
-                {data.expensesUnmatchedBranchNames.map((name) => (
-                  <span key={name} className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
-                    {name}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+        )
+      })()}
 
       {/* Tabel detail penjualan per cabang */}
       {data.salesByBranch.length > 0 && (
@@ -673,6 +703,10 @@ export default function KasirImportPage() {
   const [importResult,         setImportResult]         = useState<CombinedImportResult | null>(null)
   const [excludedExpenseKeys,  setExcludedExpenseKeys]  = useState<Set<string>>(new Set())
 
+  const [pendingMappings,   setPendingMappings]   = useState<Record<string, string>>({})
+  const [savingMappingKey,  setSavingMappingKey]  = useState<string | null>(null)
+  const [mappingSuccess,    setMappingSuccess]    = useState<string | null>(null)
+
   const [logs,        setLogs]        = useState<KasirImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
 
@@ -701,6 +735,31 @@ export default function KasirImportPage() {
   }, [])
 
   useEffect(() => { loadLogs() }, [loadLogs])
+
+  // ----- Mapping cabang kasir -----
+  async function handleSaveMapping(kasirName: string) {
+    const branchId = pendingMappings[kasirName]
+    if (!branchId) return
+    setSavingMappingKey(kasirName)
+    setMappingSuccess(null)
+    try {
+      const res = await fetch('/api/kasir-import/map-branch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kasir_name: kasirName, branch_id: branchId }),
+      })
+      const json = await res.json() as { success: boolean; message?: string }
+      if (!res.ok || !json.success) {
+        setError(json.message || 'Gagal menyimpan mapping cabang.')
+        return
+      }
+      setPendingMappings((prev) => { const next = { ...prev }; delete next[kasirName]; return next })
+      setMappingSuccess(`Mapping "${kasirName}" disimpan. Menarik ulang data...`)
+      await handlePreview()
+    } finally {
+      setSavingMappingKey(null)
+    }
+  }
 
   // Invalidate preview when date/branch filter changes
   function handleFilterChange(setter: (v: string) => void, value: string) {
@@ -930,6 +989,14 @@ export default function KasirImportPage() {
             branchName={selectedBranch?.name}
             excludedExpenseKeys={excludedExpenseKeys}
             onToggleExpenseKey={toggleExcludeExpense}
+            branches={branches}
+            pendingMappings={pendingMappings}
+            onPendingMappingChange={(kasirName, bid) =>
+              setPendingMappings((prev) => ({ ...prev, [kasirName]: bid }))
+            }
+            savingMappingKey={savingMappingKey}
+            onSaveMapping={handleSaveMapping}
+            mappingSuccess={mappingSuccess}
           />
 
           {/* Action buttons */}
