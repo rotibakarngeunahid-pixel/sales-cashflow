@@ -214,6 +214,48 @@ function CombinedPreviewPanel({
         </div>
       </div>
 
+      {/* Warning: nama cabang dari kasir tidak dikenali */}
+      {(data.salesUnmatchedBranchNames.length > 0 || data.expensesUnmatchedBranchNames.length > 0) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-amber-800">
+                Cabang tidak dikenali — data berikut tidak akan diimport
+              </p>
+              <p className="text-xs text-amber-700">
+                Nama cabang di sistem kasir tidak cocok dengan nama cabang di laporan keuangan.
+                Perbaiki dengan menyamakan nama cabang di halaman <strong>Manajemen Cabang</strong>.
+              </p>
+            </div>
+          </div>
+          {data.salesUnmatchedBranchNames.length > 0 && (
+            <div className="ml-6 space-y-1">
+              <p className="text-xs font-semibold text-amber-700">Penjualan — nama cabang dari kasir:</p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {data.salesUnmatchedBranchNames.map((name) => (
+                  <span key={name} className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {data.expensesUnmatchedBranchNames.length > 0 && (
+            <div className="ml-6 space-y-1">
+              <p className="text-xs font-semibold text-amber-700">Kas Keluar — nama cabang dari kasir:</p>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {data.expensesUnmatchedBranchNames.map((name) => (
+                  <span key={name} className="text-xs text-amber-800 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Tabel detail penjualan per cabang */}
       {data.salesByBranch.length > 0 && (
         <div className="card overflow-hidden">

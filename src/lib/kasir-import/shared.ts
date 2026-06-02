@@ -194,12 +194,14 @@ export interface CombinedPreviewResult {
   salesBranchNotFoundCount: number
   salesTotalAmount:         number    // total of new items only
   salesByBranch:            SaleBranchDetail[]
+  salesUnmatchedBranchNames:   string[]   // nama cabang kasir yg tidak cocok
   expensesNewCount:            number
   expensesDupCount:            number
   expensesBranchNotFoundCount: number
   expensesTotalAmount:         number
   expenseItems:                ExpenseItemDetail[]
   expensesByBranch:            Array<{ branchName: string; total: number; count: number }>
+  expensesUnmatchedBranchNames: string[]  // nama cabang kasir yg tidak cocok
 }
 
 // ----- Helpers -----

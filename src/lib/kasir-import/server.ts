@@ -1092,6 +1092,7 @@ export async function previewCombined(
   let salesBranchNotFoundCount = 0
   let salesTotalAmount = 0
   let salesByBranch: SaleBranchDetail[] = []
+  let salesUnmatchedBranchNames: string[] = []
 
   if (salesResult.status === 'fulfilled') {
     const { items } = salesResult.value
@@ -1099,6 +1100,11 @@ export async function previewCombined(
     salesDupCount            = items.filter((i) => i.status === 'duplicate').length
     salesSkippedCount        = items.filter((i) => i.status === 'skipped_payment').length
     salesBranchNotFoundCount = items.filter((i) => i.status === 'branch_not_found').length
+
+    const unmatchedNames = new Set(
+      items.filter((i) => i.status === 'branch_not_found').map((i) => i.branchName)
+    )
+    salesUnmatchedBranchNames = Array.from(unmatchedNames).sort()
 
     const newItems = items.filter((i) => i.status === 'new')
     salesTotalAmount = newItems.reduce((s, i) => s + i.amount, 0)
@@ -1121,12 +1127,18 @@ export async function previewCombined(
   let expensesTotalAmount = 0
   let expenseItems: ExpenseItemDetail[] = []
   let expensesByBranch: Array<{ branchName: string; total: number; count: number }> = []
+  let expensesUnmatchedBranchNames: string[] = []
 
   if (expensesResult.status === 'fulfilled') {
     const { items } = expensesResult.value
     expensesNewCount            = items.filter((i) => i.status === 'new').length
     expensesDupCount            = items.filter((i) => i.status === 'duplicate').length
     expensesBranchNotFoundCount = items.filter((i) => i.status === 'branch_not_found').length
+
+    const unmatchedExpenseNames = new Set(
+      items.filter((i) => i.status === 'branch_not_found').map((i) => i.branchName)
+    )
+    expensesUnmatchedBranchNames = Array.from(unmatchedExpenseNames).sort()
 
     const newItems = items.filter((i) => i.status === 'new')
     expensesTotalAmount = newItems.reduce((s, i) => s + i.amount, 0)
@@ -1162,12 +1174,14 @@ export async function previewCombined(
     salesBranchNotFoundCount,
     salesTotalAmount,
     salesByBranch,
+    salesUnmatchedBranchNames,
     expensesNewCount,
     expensesDupCount,
     expensesBranchNotFoundCount,
     expensesTotalAmount,
     expenseItems,
     expensesByBranch,
+    expensesUnmatchedBranchNames,
   }
 }
 
