@@ -106,12 +106,24 @@ async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<u
     )
   }
 
-  let raw: unknown
+  let responseText: string
   try {
-    raw = await response.json()
+    responseText = await response.text()
   } catch {
     throw new KasirImportError(
-      'Respons dari sistem kasir tidak valid (bukan JSON). Silakan cek integrasi.',
+      'Gagal membaca respons dari sistem kasir.',
+      502,
+      'invalid_json'
+    )
+  }
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(responseText)
+  } catch {
+    const preview = responseText.trim().slice(0, 300)
+    throw new KasirImportError(
+      `Respons dari sistem kasir tidak valid (bukan JSON). Isi respons: ${preview || '(kosong)'}`,
       502,
       'invalid_json'
     )
