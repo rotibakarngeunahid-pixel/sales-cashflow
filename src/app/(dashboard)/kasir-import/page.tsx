@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   CloudDownload,
+  Eye,
+  Info,
   RefreshCw,
   ShoppingCart,
   TrendingDown,
@@ -13,7 +15,7 @@ import {
 import { createClient } from '@/lib/supabase/client'
 import type { Branch } from '@/types/database'
 import type { KasirImportLog } from '@/types/database'
-import type { CombinedImportResult } from '@/lib/kasir-import/shared'
+import type { CombinedImportResult, CombinedPreviewResult } from '@/lib/kasir-import/shared'
 import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingSpinner, PageLoading } from '@/components/ui/LoadingSpinner'
@@ -23,6 +25,16 @@ import { invalidateCachedData } from '@/lib/utils/client-cache'
 // -----------------------------------------------
 // Types
 // -----------------------------------------------
+
+type PageState = 'form' | 'previewing' | 'review' | 'importing' | 'result'
+
+interface ApiPreviewResponse {
+  success: boolean
+  message?: string
+  code?:   string
+  result?: CombinedPreviewResult
+}
+
 interface ApiImportResponse {
   success: boolean
   message?: string
@@ -44,6 +56,7 @@ const TYPE_STYLES = {
 // -----------------------------------------------
 // Sub-components
 // -----------------------------------------------
+
 function Notice({ type, message }: { type: 'success' | 'error' | 'warning' | 'info'; message: string }) {
   const styles = {
     success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -51,7 +64,7 @@ function Notice({ type, message }: { type: 'success' | 'error' | 'warning' | 'in
     warning: 'border-amber-200 bg-amber-50 text-amber-800',
     info:    'border-blue-200 bg-blue-50 text-blue-700',
   }[type]
-  const Icon = type === 'success' ? CheckCircle2 : type === 'error' ? XCircle : AlertTriangle
+  const Icon = type === 'success' ? CheckCircle2 : type === 'error' ? XCircle : type === 'warning' ? AlertTriangle : Info
   return (
     <div className={cn('flex items-start gap-2 rounded-xl border p-3 text-sm font-medium', styles)}>
       <Icon className="mt-0.5 h-4 w-4 flex-shrink-0" />
@@ -69,8 +82,271 @@ function ImportTypeLabel({ type }: { type: KasirImportLog['import_type'] }) {
 }
 
 // -----------------------------------------------
-// Ringkasan hasil import (dengan breakdown detail)
+// Panel preview (sebelum konfirmasi — data BELUM disimpan)
 // -----------------------------------------------
+
+function CombinedPreviewPanel({
+  data,
+  startDate,
+  endDate,
+  branchName,
+}: {
+  data: CombinedPreviewResult
+  startDate: string
+  endDate: string
+  branchName?: string
+}) {
+  const totalNew = data.salesNewCount + data.expensesNewCount
+  const totalDup = data.salesDupCount + data.expensesDupCount
+  const hasNewData = totalNew > 0
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className={cn(
+        'flex items-start gap-3 rounded-xl border p-4',
+        hasNewData ? 'border-blue-200 bg-blue-50' : 'border-amber-200 bg-amber-50'
+      )}>
+        {hasNewData
+          ? <Eye className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          : <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />}
+        <div className="space-y-1">
+          <p className="text-sm font-bold text-slate-950">Preview Data dari Sistem Kasir</p>
+          <p className="text-xs text-slate-600">
+            Periode:{' '}
+            <span className="font-semibold">
+              {startDate === endDate ? formatDate(startDate) : `${formatDate(startDate)} – ${formatDate(endDate)}`}
+            </span>
+            {branchName && (
+              <> · Cabang: <span className="font-semibold">{branchName}</span></>
+            )}
+          </p>
+          {hasNewData ? (
+            <p className="text-xs text-blue-700 font-medium">
+              {totalNew} item baru siap diimport.
+              {totalDup > 0 && <> {totalDup} item sudah pernah diimport dan akan dilewati otomatis.</>}
+              {' '}Periksa rincian di bawah, lalu klik <strong>Konfirmasi &amp; Simpan</strong>.
+            </p>
+          ) : (
+            <p className="text-xs text-amber-700 font-medium">
+              Tidak ada data baru untuk diimport pada periode ini.
+              {totalDup > 0 && ` (${totalDup} item sudah pernah diimport sebelumnya.)`}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Ringkasan penjualan + kas keluar */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* Penjualan */}
+        <div className="card p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+            <ShoppingCart className="h-4 w-4 text-blue-600" />
+            <span className="text-sm font-bold text-slate-950">Penjualan (Tunai &amp; QRIS)</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-blue-50 p-3 text-center">
+              <p className="text-xs text-blue-600">Akan Diimport</p>
+              <p className="text-2xl font-extrabold text-blue-700">{data.salesNewCount}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <p className="text-xs text-slate-500">Sudah Ada</p>
+              <p className="text-2xl font-extrabold text-slate-500">{data.salesDupCount}</p>
+            </div>
+            <div className="rounded-xl bg-amber-50 p-3 text-center">
+              <p className="text-xs text-amber-600">Tidak Dikenali</p>
+              <p className="text-2xl font-extrabold text-amber-600">{data.salesBranchNotFoundCount}</p>
+            </div>
+          </div>
+          {data.salesNewCount > 0 && (
+            <div className="rounded-xl bg-emerald-50 px-4 py-3 flex items-center justify-between">
+              <span className="text-xs font-semibold text-emerald-700">Total Akan Diimport</span>
+              <span className="text-lg font-extrabold text-emerald-700">{formatRupiah(data.salesTotalAmount)}</span>
+            </div>
+          )}
+          {data.salesNewCount === 0 && (
+            <p className="text-xs text-slate-400 italic text-center py-1">Tidak ada penjualan baru.</p>
+          )}
+        </div>
+
+        {/* Kas Keluar */}
+        <div className="card p-4 space-y-3">
+          <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+            <TrendingDown className="h-4 w-4 text-red-600" />
+            <span className="text-sm font-bold text-slate-950">Kas Keluar</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-blue-50 p-3 text-center">
+              <p className="text-xs text-blue-600">Akan Diimport</p>
+              <p className="text-2xl font-extrabold text-blue-700">{data.expensesNewCount}</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-3 text-center">
+              <p className="text-xs text-slate-500">Sudah Ada</p>
+              <p className="text-2xl font-extrabold text-slate-500">{data.expensesDupCount}</p>
+            </div>
+            <div className="rounded-xl bg-amber-50 p-3 text-center">
+              <p className="text-xs text-amber-600">Tidak Dikenali</p>
+              <p className="text-2xl font-extrabold text-amber-600">{data.expensesBranchNotFoundCount}</p>
+            </div>
+          </div>
+          {data.expensesNewCount > 0 && (
+            <div className="rounded-xl bg-red-50 px-4 py-3 flex items-center justify-between">
+              <span className="text-xs font-semibold text-red-700">Total Akan Diimport</span>
+              <span className="text-lg font-extrabold text-red-700">{formatRupiah(data.expensesTotalAmount)}</span>
+            </div>
+          )}
+          {data.expensesNewCount === 0 && (
+            <p className="text-xs text-slate-400 italic text-center py-1">Tidak ada kas keluar baru.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Tabel detail penjualan per cabang */}
+      {data.salesByBranch.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-slate-100 bg-blue-50/50 px-4 py-3">
+            <ShoppingCart className="h-4 w-4 text-blue-600" />
+            <h4 className="text-sm font-bold text-slate-950">Rincian Penjualan per Cabang</h4>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[400px]">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Cabang</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Tunai</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">QRIS</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {data.salesByBranch.map((b) => (
+                  <tr key={b.branchName} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5 font-semibold text-slate-950">{b.branchName}</td>
+                    <td className="px-4 py-2.5 text-right text-green-700">
+                      {b.totalCash > 0 ? formatRupiah(b.totalCash) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-purple-700">
+                      {b.totalQris > 0 ? formatRupiah(b.totalQris) : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold text-slate-950">{formatRupiah(b.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {data.salesByBranch.length > 1 && (
+                <tfoot>
+                  <tr className="border-t border-slate-200 bg-slate-50">
+                    <td className="px-4 py-2.5 text-xs font-bold uppercase text-slate-500">Total</td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-green-700">
+                      {formatRupiah(data.salesByBranch.reduce((s, b) => s + b.totalCash, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-purple-700">
+                      {formatRupiah(data.salesByBranch.reduce((s, b) => s + b.totalQris, 0))}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs font-bold text-slate-950">
+                      {formatRupiah(data.salesByBranch.reduce((s, b) => s + b.total, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tabel detail kas keluar */}
+      {data.expenseItems.length > 0 && (
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-red-50/50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-red-600" />
+              <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar</h4>
+            </div>
+            {data.expensesByBranch.length > 1 && (
+              <div className="flex gap-3 text-xs text-slate-500 flex-wrap">
+                {data.expensesByBranch.map((b) => (
+                  <span key={b.branchName}>
+                    <span className="font-semibold text-slate-700">{b.branchName}</span>:{' '}
+                    <span className="font-bold text-red-600">{formatRupiah(b.total)}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px]">
+              <thead>
+                <tr className="border-b border-slate-100">
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Keterangan</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Cabang</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Kategori</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wide text-slate-400">Dicatat</th>
+                  <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wide text-slate-400">Nominal</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {data.expenseItems.map((item, i) => (
+                  <tr key={i} className="hover:bg-slate-50">
+                    <td className="px-4 py-2.5">
+                      <p className="font-semibold text-slate-950">{item.expenseName}</p>
+                      <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
+                    <td className="px-4 py-2.5">
+                      {item.category
+                        ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
+                        : <span className="text-slate-300 text-xs">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
+                    <td className="px-4 py-2.5 text-right font-bold text-red-600">{formatRupiah(item.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-200 bg-slate-50">
+                  <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase text-slate-500">
+                    Total ({data.expenseItems.length} item)
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-xs font-bold text-red-700">
+                    {formatRupiah(data.expenseItems.reduce((s, i) => s + i.amount, 0))}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Footer total gabungan */}
+      {hasNewData && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+            <span className="text-slate-600">
+              Total akan diimport:{' '}
+              <span className="font-extrabold text-blue-700">{totalNew} item</span>
+            </span>
+            <div className="flex flex-wrap gap-4">
+              {data.salesTotalAmount > 0 && (
+                <span className="text-slate-600">
+                  Masuk: <span className="font-extrabold text-emerald-700">{formatRupiah(data.salesTotalAmount)}</span>
+                </span>
+              )}
+              {data.expensesTotalAmount > 0 && (
+                <span className="text-slate-600">
+                  Keluar: <span className="font-extrabold text-red-700">{formatRupiah(data.expensesTotalAmount)}</span>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// -----------------------------------------------
+// Panel hasil import (setelah konfirmasi — data SUDAH disimpan)
+// -----------------------------------------------
+
 function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
   const { sales, expenses, salesByBranch, expenseItems, expensesByBranch } = result
 
@@ -79,9 +355,7 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
       {/* Header status */}
       <div className={cn(
         'flex items-start gap-3 rounded-xl border p-4',
-        result.success
-          ? 'border-emerald-200 bg-emerald-50'
-          : 'border-amber-200 bg-amber-50'
+        result.success ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
       )}>
         {result.success
           ? <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0 mt-0.5" />
@@ -229,10 +503,10 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-red-50/50 px-4 py-3">
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-red-600" />
-              <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar</h4>
+              <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar (Berhasil Diimport)</h4>
             </div>
             {expensesByBranch.length > 1 && (
-              <div className="flex gap-3 text-xs text-slate-500">
+              <div className="flex gap-3 text-xs text-slate-500 flex-wrap">
                 {expensesByBranch.map((b) => (
                   <span key={b.branchName}>
                     <span className="font-semibold text-slate-700">{b.branchName}</span>:{' '}
@@ -316,6 +590,7 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
 // -----------------------------------------------
 // Main page
 // -----------------------------------------------
+
 export default function KasirImportPage() {
   const today = toDateInputValue()
   const [startDate, setStartDate] = useState(today)
@@ -323,8 +598,9 @@ export default function KasirImportPage() {
   const [branchId,  setBranchId]  = useState('')
   const [branches,  setBranches]  = useState<Pick<Branch, 'id' | 'name'>[]>([])
 
-  const [importing,    setImporting]    = useState(false)
+  const [pageState,    setPageState]    = useState<PageState>('form')
   const [error,        setError]        = useState<string | null>(null)
+  const [previewData,  setPreviewData]  = useState<CombinedPreviewResult | null>(null)
   const [importResult, setImportResult] = useState<CombinedImportResult | null>(null)
 
   const [logs,        setLogs]        = useState<KasirImportLog[]>([])
@@ -356,14 +632,64 @@ export default function KasirImportPage() {
 
   useEffect(() => { loadLogs() }, [loadLogs])
 
-  // ----- Import -----
-  async function handleImport() {
+  // Invalidate preview when date/branch filter changes
+  function handleFilterChange(setter: (v: string) => void, value: string) {
+    setter(value)
+    if (pageState === 'review') {
+      setPageState('form')
+      setPreviewData(null)
+      setError(null)
+    }
+  }
+
+  // ----- Step 1: Tarik Data (preview only) -----
+  async function handlePreview() {
     if (!startDate || !endDate) { setError('Lengkapi tanggal terlebih dahulu.'); return }
     if (endDate < startDate)    { setError('Tanggal akhir tidak boleh sebelum tanggal mulai.'); return }
 
-    setImporting(true)
+    setPageState('previewing')
     setError(null)
-    setImportResult(null)
+    setPreviewData(null)
+
+    try {
+      const res = await fetch('/api/kasir-import/preview', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          start_date: startDate,
+          end_date:   endDate,
+          branch_id:  branchId || undefined,
+        }),
+      })
+      const json = await res.json() as ApiPreviewResponse
+
+      if (!res.ok || !json.success) {
+        const code = json.code
+        if (code === 'missing_api_key' || code === 'invalid_api_key') {
+          setError('API Key integrasi kasir bermasalah. Hubungi administrator.')
+        } else if (code === 'endpoint_unreachable') {
+          setError('Tidak dapat terhubung ke sistem kasir. Periksa koneksi dan coba lagi.')
+        } else if (code === 'invalid_date') {
+          setError(json.message || 'Format tanggal tidak valid.')
+        } else {
+          setError(json.message || 'Gagal mengambil data dari sistem kasir. Silakan coba lagi.')
+        }
+        setPageState('form')
+        return
+      }
+
+      setPreviewData(json.result!)
+      setPageState('review')
+    } catch {
+      setError('Gagal mengirim permintaan ke server. Periksa koneksi dan coba lagi.')
+      setPageState('form')
+    }
+  }
+
+  // ----- Step 2: Konfirmasi Import (save to DB) -----
+  async function handleImport() {
+    setPageState('importing')
+    setError(null)
 
     try {
       const res = await fetch('/api/kasir-import/combined', {
@@ -383,23 +709,35 @@ export default function KasirImportPage() {
           setError('API Key integrasi kasir bermasalah. Hubungi administrator.')
         } else if (code === 'endpoint_unreachable') {
           setError('Tidak dapat terhubung ke sistem kasir. Periksa koneksi dan coba lagi.')
-        } else if (code === 'invalid_date') {
-          setError(json.message || 'Format tanggal tidak valid.')
         } else {
           setError(json.message || 'Import gagal. Silakan coba lagi.')
         }
+        setPageState('review')
         return
       }
 
       setImportResult(json.result!)
+      setPageState('result')
       invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
       await loadLogs()
     } catch {
       setError('Gagal mengirim permintaan ke server. Periksa koneksi dan coba lagi.')
-    } finally {
-      setImporting(false)
+      setPageState('review')
     }
   }
+
+  // ----- Reset ke form -----
+  function handleReset() {
+    setPageState('form')
+    setPreviewData(null)
+    setImportResult(null)
+    setError(null)
+  }
+
+  const selectedBranch = branches.find((b) => b.id === branchId)
+  const hasNewData = previewData
+    ? (previewData.salesNewCount + previewData.expensesNewCount) > 0
+    : false
 
   return (
     <div className="space-y-6">
@@ -408,105 +746,168 @@ export default function KasirImportPage() {
         <p className="page-kicker">Integrasi</p>
         <h2 className="text-xl font-bold text-gray-900">Import Data dari POS</h2>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
-          Tarik data penjualan (Tunai &amp; QRIS) dan kas keluar langsung dari sistem kasir ke laporan keuangan —
-          cukup <strong>1 kali klik</strong>.
+          Tarik data penjualan (Tunai &amp; QRIS) dan kas keluar dari sistem kasir, review terlebih dahulu,
+          lalu konfirmasi untuk menyimpan ke laporan keuangan.
         </p>
       </div>
 
-      {/* Filter + tombol import */}
-      <section className="card p-4 space-y-4">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
-          Pilih Periode &amp; Cabang
-        </p>
+      {/* ── STEP 1: FORM ── */}
+      {(pageState === 'form' || pageState === 'previewing') && (
+        <section className="card p-4 space-y-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
+            Pilih Periode &amp; Cabang
+          </p>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-              Periode Tanggal
-            </label>
-            <DateRangeFilter
-              startDate={startDate}
-              endDate={endDate}
-              onStartChange={(v) => { setStartDate(v); setImportResult(null); setError(null) }}
-              onEndChange={(v)   => { setEndDate(v);   setImportResult(null); setError(null) }}
-            />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Periode Tanggal
+              </label>
+              <DateRangeFilter
+                startDate={startDate}
+                endDate={endDate}
+                onStartChange={(v) => handleFilterChange(setStartDate, v)}
+                onEndChange={(v)   => handleFilterChange(setEndDate, v)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
+                Cabang / Outlet
+              </label>
+              <SelectFilter
+                value={branchId}
+                onChange={(v) => handleFilterChange(setBranchId, v)}
+                placeholder="Semua Cabang"
+                options={branches.map((b) => ({ value: b.id, label: b.name }))}
+              />
+            </div>
           </div>
-          <div>
-            <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
-              Cabang / Outlet
-            </label>
-            <SelectFilter
-              value={branchId}
-              onChange={(v) => { setBranchId(v); setImportResult(null); setError(null) }}
-              placeholder="Semua Cabang"
-              options={branches.map((b) => ({ value: b.id, label: b.name }))}
-            />
-          </div>
-        </div>
 
-        <div className="flex items-center gap-3 pt-1 flex-wrap">
-          <button
-            type="button"
-            onClick={handleImport}
-            disabled={importing}
-            className="btn-primary flex items-center gap-2 text-sm"
-          >
-            {importing
-              ? <><LoadingSpinner className="h-4 w-4 border-white border-t-transparent" /> Sedang Mengimport...</>
-              : <><CloudDownload className="h-4 w-4" /> Import Data dari POS</>
-            }
-          </button>
-
-          {importResult && (
+          <div className="flex items-center gap-3 pt-1 flex-wrap">
             <button
               type="button"
-              onClick={handleImport}
-              disabled={importing}
-              className="btn-outline flex items-center gap-2 text-sm"
+              onClick={handlePreview}
+              disabled={pageState === 'previewing'}
+              className="btn-primary flex items-center gap-2 text-sm"
             >
-              <RefreshCw className={cn('h-4 w-4', importing && 'animate-spin')} />
-              Import Ulang
+              {pageState === 'previewing'
+                ? <><LoadingSpinner className="h-4 w-4 border-white border-t-transparent" /> Mengambil Data...</>
+                : <><CloudDownload className="h-4 w-4" /> Tarik Data dari POS</>
+              }
             </button>
-          )}
-        </div>
+          </div>
 
-        {/* Info box */}
-        <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700">
-          <strong>Yang akan diimport:</strong>
-          <ul className="mt-1 space-y-0.5 ml-2">
-            <li>✓ Penjualan Tunai dan QRIS sebagai <strong>Pemasukan</strong></li>
-            <li>✓ Kas Keluar (pengeluaran staff) sebagai <strong>Pengeluaran</strong></li>
-            <li>✓ Transaksi online delivery (GoFood, GrabFood, ShopeeFood) <strong>tidak diimport</strong></li>
-            <li>✓ Data yang sudah pernah diimport <strong>otomatis dilewati</strong> (tidak dobel)</li>
-            <li>✓ Semua waktu dalam <strong>WITA (UTC+8)</strong></li>
-          </ul>
-        </div>
-      </section>
+          {/* Info box */}
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-700">
+            <strong>Yang akan ditarik untuk direview:</strong>
+            <ul className="mt-1 space-y-0.5 ml-2">
+              <li>✓ Penjualan Tunai dan QRIS sebagai <strong>Pemasukan</strong></li>
+              <li>✓ Kas Keluar (pengeluaran staff) sebagai <strong>Pengeluaran</strong></li>
+              <li>✓ Transaksi online delivery (GoFood, GrabFood, ShopeeFood) <strong>tidak diimport</strong></li>
+              <li>✓ Data yang sudah pernah diimport <strong>otomatis dilewati</strong> (tidak dobel)</li>
+              <li>✓ Semua waktu dalam <strong>WITA (UTC+8)</strong></li>
+            </ul>
+          </div>
 
-      {/* Loading indicator */}
-      {importing && (
+          {/* Error di step form */}
+          {pageState === 'form' && error && <Notice type="error" message={error} />}
+        </section>
+      )}
+
+      {/* Loading: sedang tarik data */}
+      {pageState === 'previewing' && (
         <section className="card p-6">
           <div className="flex flex-col items-center justify-center gap-3 text-slate-600">
             <LoadingSpinner className="h-8 w-8" />
             <div className="text-center">
-              <p className="text-sm font-bold">Sedang mengimport data dari sistem kasir...</p>
+              <p className="text-sm font-bold">Mengambil data dari sistem kasir...</p>
               <p className="text-xs text-slate-400 mt-1">
                 Menarik penjualan dan kas keluar untuk periode {formatDate(startDate)}
                 {endDate !== startDate && ` – ${formatDate(endDate)}`}
-                {branchId && ` · ${branches.find((b) => b.id === branchId)?.name || 'Cabang dipilih'}`}
+                {selectedBranch && ` · ${selectedBranch.name}`}
               </p>
             </div>
           </div>
         </section>
       )}
 
-      {/* Error */}
-      {!importing && error && <Notice type="error" message={error} />}
+      {/* ── STEP 2: REVIEW ── */}
+      {pageState === 'review' && previewData && (
+        <div className="space-y-4">
+          {error && <Notice type="error" message={error} />}
 
-      {/* Result */}
-      {!importing && importResult && <CombinedResultPanel result={importResult} />}
+          <CombinedPreviewPanel
+            data={previewData}
+            startDate={startDate}
+            endDate={endDate}
+            branchName={selectedBranch?.name}
+          />
 
-      {/* Log import */}
+          {/* Action buttons */}
+          <div className="card p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p className="text-sm text-slate-600">
+              {hasNewData
+                ? <><span className="font-bold text-blue-700">{previewData.salesNewCount + previewData.expensesNewCount} item</span> siap diimport ke laporan keuangan.</>
+                : <span className="text-amber-600 font-medium">Tidak ada data baru untuk diimport.</span>
+              }
+            </p>
+            <div className="flex gap-3 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={handleReset}
+                className="btn-outline flex-1 sm:flex-none text-sm"
+              >
+                ← Ubah Periode
+              </button>
+              <button
+                type="button"
+                onClick={handleImport}
+                disabled={!hasNewData}
+                className="btn-primary flex-1 sm:flex-none text-sm"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Konfirmasi &amp; Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading: sedang menyimpan */}
+      {pageState === 'importing' && (
+        <section className="card p-6">
+          <div className="flex flex-col items-center justify-center gap-3 text-slate-600">
+            <LoadingSpinner className="h-8 w-8" />
+            <div className="text-center">
+              <p className="text-sm font-bold">Menyimpan data ke laporan keuangan...</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Mengimport {previewData ? previewData.salesNewCount + previewData.expensesNewCount : ''} item
+                untuk periode {formatDate(startDate)}
+                {endDate !== startDate && ` – ${formatDate(endDate)}`}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ── STEP 3: RESULT ── */}
+      {pageState === 'result' && importResult && (
+        <div className="space-y-4">
+          <CombinedResultPanel result={importResult} />
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="btn-outline flex items-center gap-2 text-sm"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Import Lagi
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── LOG RIWAYAT (selalu tampil di bawah) ── */}
       <section className="card overflow-hidden">
         <div className="flex flex-col gap-1 border-b border-slate-100 p-4 md:flex-row md:items-center md:justify-between">
           <div>

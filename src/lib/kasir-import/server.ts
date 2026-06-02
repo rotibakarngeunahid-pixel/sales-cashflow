@@ -25,6 +25,7 @@ import {
   type KasirImportResult,
   type MappingTarget,
   type CombinedImportResult,
+  type CombinedPreviewResult,
   type SaleBranchDetail,
   type ExpenseItemDetail,
 } from './shared'
@@ -49,7 +50,7 @@ export class KasirImportError extends Error {
 
 // =============================================
 // POS PHP API client
-// URL: POS_API_URL env var → https://pos.rotibakarngeunah.my.id/api/api.php/rpc
+// URL: POS_API_URL env var → https://api.rotibakarngeunah.my.id/api/api.php/rpc
 // Auth: X-API-Key header (POS_API_SECRET_KEY) + p_api_key body (KASIR_INTEGRATION_API_KEY)
 // =============================================
 
@@ -64,7 +65,7 @@ interface KasirRpcParams {
 async function callKasirRpc(endpoint: string, params: KasirRpcParams): Promise<unknown[]> {
   const integrationApiKey = process.env.KASIR_INTEGRATION_API_KEY
   const posApiSecretKey   = process.env.POS_API_SECRET_KEY
-  const posApiUrl         = process.env.POS_API_URL || 'https://pos.rotibakarngeunah.my.id/api/api.php/rpc'
+  const posApiUrl         = process.env.POS_API_URL || 'https://api.rotibakarngeunah.my.id/api/api.php/rpc'
 
   if (!integrationApiKey) {
     throw new KasirImportError(
@@ -1036,6 +1037,125 @@ export async function importCombined(
     expenses: expensesResult,
     message,
     salesByBranch,
+    expenseItems,
+    expensesByBranch,
+  }
+}
+
+// =============================================
+// COMBINED PREVIEW (fetch only, no save)
+// =============================================
+
+export async function previewCombined(
+  supabase: Supabase,
+  params: { startDate: string; endDate: string; branchId?: string }
+): Promise<CombinedPreviewResult> {
+  validateDateRange(params.startDate, params.endDate)
+
+  const [salesResult, expensesResult] = await Promise.allSettled([
+    getSalesPreview(supabase, {
+      startDate:     params.startDate,
+      endDate:       params.endDate,
+      branchId:      params.branchId,
+      paymentMethod: 'Tunai+QRIS',
+    }),
+    getExpensesPreview(supabase, {
+      startDate: params.startDate,
+      endDate:   params.endDate,
+      branchId:  params.branchId,
+    }),
+  ])
+
+  // Re-throw any critical (non-empty-data) error from either side
+  for (const result of [salesResult, expensesResult]) {
+    if (result.status === 'rejected') {
+      const err = result.reason
+      if (!(err instanceof KasirImportError && err.code === 'empty_data')) {
+        throw err
+      }
+    }
+  }
+
+  // Build sales summary
+  let salesNewCount = 0
+  let salesDupCount = 0
+  let salesSkippedCount = 0
+  let salesBranchNotFoundCount = 0
+  let salesTotalAmount = 0
+  let salesByBranch: SaleBranchDetail[] = []
+
+  if (salesResult.status === 'fulfilled') {
+    const { items } = salesResult.value
+    salesNewCount            = items.filter((i) => i.status === 'new').length
+    salesDupCount            = items.filter((i) => i.status === 'duplicate').length
+    salesSkippedCount        = items.filter((i) => i.status === 'skipped_payment').length
+    salesBranchNotFoundCount = items.filter((i) => i.status === 'branch_not_found').length
+
+    const newItems = items.filter((i) => i.status === 'new')
+    salesTotalAmount = newItems.reduce((s, i) => s + i.amount, 0)
+
+    const bMap = new Map<string, SaleBranchDetail>()
+    for (const item of newItems) {
+      const b = bMap.get(item.branchName) || { branchName: item.branchName, totalCash: 0, totalQris: 0, total: 0 }
+      if (item.paymentCategory === 'Tunai') b.totalCash += item.amount
+      if (item.paymentCategory === 'QRIS')  b.totalQris += item.amount
+      b.total += item.amount
+      bMap.set(item.branchName, b)
+    }
+    salesByBranch = Array.from(bMap.values()).sort((a, b) => b.total - a.total)
+  }
+
+  // Build expenses summary
+  let expensesNewCount = 0
+  let expensesDupCount = 0
+  let expensesBranchNotFoundCount = 0
+  let expensesTotalAmount = 0
+  let expenseItems: ExpenseItemDetail[] = []
+  let expensesByBranch: Array<{ branchName: string; total: number; count: number }> = []
+
+  if (expensesResult.status === 'fulfilled') {
+    const { items } = expensesResult.value
+    expensesNewCount            = items.filter((i) => i.status === 'new').length
+    expensesDupCount            = items.filter((i) => i.status === 'duplicate').length
+    expensesBranchNotFoundCount = items.filter((i) => i.status === 'branch_not_found').length
+
+    const newItems = items.filter((i) => i.status === 'new')
+    expensesTotalAmount = newItems.reduce((s, i) => s + i.amount, 0)
+
+    expenseItems = newItems
+      .map((item) => ({
+        expenseName: item.expenseName,
+        branchName:  item.branchName,
+        category:    item.category,
+        amount:      item.amount,
+        dateWITA:    item.dateWITA,
+        recordedBy:  item.recordedBy,
+      }))
+      .sort((a, b) => a.branchName.localeCompare(b.branchName) || a.dateWITA.localeCompare(b.dateWITA))
+
+    const bMap = new Map<string, { total: number; count: number }>()
+    for (const item of newItems) {
+      const b = bMap.get(item.branchName) || { total: 0, count: 0 }
+      b.total += item.amount
+      b.count += 1
+      bMap.set(item.branchName, b)
+    }
+    expensesByBranch = Array.from(bMap.entries())
+      .map(([branchName, v]) => ({ branchName, ...v }))
+      .sort((a, b) => b.total - a.total)
+  }
+
+  return {
+    salesNewCount,
+    salesDupCount,
+    salesSkippedCount,
+    salesBranchNotFoundCount,
+    salesTotalAmount,
+    salesByBranch,
+    expensesNewCount,
+    expensesDupCount,
+    expensesBranchNotFoundCount,
+    expensesTotalAmount,
     expenseItems,
     expensesByBranch,
   }

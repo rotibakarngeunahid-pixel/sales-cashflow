@@ -185,6 +185,22 @@ export interface CombinedImportResult {
   expensesByBranch: Array<{ branchName: string; total: number; count: number }>
 }
 
+// Preview result (data fetched from kasir, NOT yet saved to DB)
+export interface CombinedPreviewResult {
+  salesNewCount:            number
+  salesDupCount:            number
+  salesSkippedCount:        number    // skipped_payment (online platforms)
+  salesBranchNotFoundCount: number
+  salesTotalAmount:         number    // total of new items only
+  salesByBranch:            SaleBranchDetail[]
+  expensesNewCount:            number
+  expensesDupCount:            number
+  expensesBranchNotFoundCount: number
+  expensesTotalAmount:         number
+  expenseItems:                ExpenseItemDetail[]
+  expensesByBranch:            Array<{ branchName: string; total: number; count: number }>
+}
+
 // ----- Helpers -----
 
 export function normalizePaymentMethod(raw: string): 'Tunai' | 'QRIS' | null {
