@@ -67,6 +67,32 @@ function getNominalLabel(tx: CashflowTransaction) {
   return `${prefix}${formatRupiah(getNominalAmount(tx))}`
 }
 
+// Transaksi hasil "Biaya Bersama" (split ke beberapa cabang) selalu punya
+// reference_group_id dengan source manual. Dipakai untuk membedakan, misalnya,
+// biaya kurir yang sudah dibagi ke cabang vs yang belum.
+function isSplitTx(tx: CashflowTransaction) {
+  return tx.source === 'manual' && Boolean(tx.reference_group_id)
+}
+
+function SplitStatusBadge({ tx }: { tx: CashflowTransaction }) {
+  // Hanya relevan untuk pengeluaran (cash out) manual.
+  if (tx.transaction_type !== 'cash_out' || tx.source !== 'manual') return null
+
+  if (isSplitTx(tx)) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+        <Scissors className="w-3 h-3" /> Dibagi
+      </span>
+    )
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+      Belum dibagi
+    </span>
+  )
+}
+
 function CashflowSourceLabel({ tx }: { tx: CashflowTransaction }) {
   if (tx.source === 'sales') {
     return (
@@ -151,6 +177,7 @@ export default function CashflowPage() {
   const [filterBranch, setFilterBranch] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterCat, setFilterCat] = useState('')
+  const [filterSplit, setFilterSplit] = useState('') // '' | 'split' | 'unsplit'
 
   const [modalOpen, setModalOpen] = useState(false)
   const [splitModalOpen, setSplitModalOpen] = useState(false)
@@ -172,7 +199,7 @@ export default function CashflowPage() {
 
   const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
-    const cacheKey = `cashflow:${startDate}:${endDate}:${filterBranch || 'all'}:${filterType || 'all'}:${filterCat || 'all'}`
+    const cacheKey = `cashflow:${startDate}:${endDate}:${filterBranch || 'all'}:${filterType || 'all'}:${filterCat || 'all'}:${filterSplit || 'all'}`
     const cached = getCachedData<CashflowTransaction[]>(cacheKey)
 
     if (cached && !options.force) {
@@ -196,6 +223,9 @@ export default function CashflowPage() {
         if (filterBranch) query = query.eq('branch_id', filterBranch)
         if (filterType) query = query.eq('transaction_type', filterType as CashflowType)
         if (filterCat) query = query.eq('category_id', filterCat)
+        // Status pembagian (biaya bersama): sudah dibagi = punya reference_group_id.
+        if (filterSplit === 'split') query = query.eq('source', 'manual').not('reference_group_id', 'is', null)
+        if (filterSplit === 'unsplit') query = query.eq('source', 'manual').is('reference_group_id', null)
 
         const { data } = await query
         return data || []
@@ -205,7 +235,7 @@ export default function CashflowPage() {
 
     setTransactions(data)
     setLoading(false)
-  }, [startDate, endDate, filterBranch, filterType, filterCat])
+  }, [startDate, endDate, filterBranch, filterType, filterCat, filterSplit])
 
   useEffect(() => { load() }, [load])
 
@@ -576,6 +606,7 @@ export default function CashflowPage() {
           <SelectFilter value={filterBranch} onChange={setFilterBranch} placeholder="Semua Cabang" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
           <SelectFilter value={filterType} onChange={setFilterType} placeholder="Semua Tipe" options={[{ value: 'cash_in', label: 'Cash In' }, { value: 'cash_out', label: 'Cash Out' }]} />
           <SelectFilter value={filterCat} onChange={setFilterCat} placeholder="Semua Kategori" options={categories.map((c) => ({ value: c.id, label: c.name }))} />
+          <SelectFilter value={filterSplit} onChange={setFilterSplit} placeholder="Semua Pembagian" options={[{ value: 'split', label: 'Sudah Dibagi' }, { value: 'unsplit', label: 'Belum Dibagi' }]} />
           <button onClick={() => { load({ force: true }); loadCashPositions({ force: true }) }} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
@@ -691,6 +722,7 @@ export default function CashflowPage() {
                       <div className="min-w-0">
                         <p className="truncate font-medium">{tx.category?.name || '-'}</p>
                         {tx.description && <p className="truncate text-xs text-gray-500">{tx.description}</p>}
+                        <div className="mt-1"><SplitStatusBadge tx={tx} /></div>
                       </div>
                     </td>
                     <td className={`table-cell text-right font-bold text-rupiah ${tx.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -757,6 +789,7 @@ export default function CashflowPage() {
                       <CashflowTypeBadge type={tx.transaction_type} />
                       <p className="mt-2 truncate text-sm font-semibold text-slate-900">{tx.category?.name || '-'}</p>
                       {tx.description && <p className="mt-0.5 truncate text-xs text-slate-500">{tx.description}</p>}
+                      <div className="mt-1.5"><SplitStatusBadge tx={tx} /></div>
                     </div>
                     <p className={`max-w-[48%] break-words text-right text-base font-bold text-rupiah ${tx.transaction_type === 'cash_in' ? 'text-emerald-600' : 'text-red-600'}`}>
                       {getNominalLabel(tx)}

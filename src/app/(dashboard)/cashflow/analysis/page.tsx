@@ -133,6 +133,23 @@ function getCashflowAmount(tx: CashflowTransaction) {
   return toNumber(tx.cash_out) || toNumber(tx.amount)
 }
 
+// Transfer beban antar cabang BUKAN pendapatan/beban baru di level usaha,
+// melainkan reklasifikasi beban pokok: cabang pengirim bebannya berkurang
+// (dicatat sebagai cash_in) dan cabang penerima bebannya bertambah (cash_out).
+function isBebanTransfer(tx: CashflowTransaction) {
+  return tx.source === 'beban_transfer'
+}
+
+// Kontribusi transaksi ke total beban (contra-beban untuk sisi pengirim transfer).
+// Positif = menambah beban, negatif = mengurangi beban.
+function getExpenseContribution(tx: CashflowTransaction) {
+  const amount = getCashflowAmount(tx)
+  if (isBebanTransfer(tx)) {
+    return tx.transaction_type === 'cash_in' ? -amount : amount
+  }
+  return tx.transaction_type === 'cash_out' ? amount : 0
+}
+
 function formatShortRupiah(value: number) {
   const abs = Math.abs(value)
   const sign = value < 0 ? '-' : ''
@@ -497,18 +514,18 @@ export default function CashflowAnalysisPage() {
 
   const summary = useMemo(() => {
     const revenue = postedSales.reduce((sum, report) => sum + toNumber(report.grand_total_nett_sales), 0)
+    // Transfer beban tidak dihitung sebagai cash in / pendapatan.
     const cashIn = cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in')
+      .filter((tx) => tx.transaction_type === 'cash_in' && !isBebanTransfer(tx))
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
     const salesCashIn = cashflow
       .filter((tx) => tx.transaction_type === 'cash_in' && tx.source === 'sales')
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
     const otherIncome = cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales')
+      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales' && !isBebanTransfer(tx))
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
-    const expense = cashflow
-      .filter((tx) => tx.transaction_type === 'cash_out')
-      .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
+    // Beban = total cash out, dikurangi kredit transfer beban (sisi pengirim).
+    const expense = cashflow.reduce((sum, tx) => sum + getExpenseContribution(tx), 0)
     const cashPosition = positionRows.reduce((sum, row) => sum + toNumber(row.cash_in) - toNumber(row.cash_out), 0)
     const grossIncome = revenue + otherIncome
     const netProfit = grossIncome - expense
@@ -563,6 +580,12 @@ export default function CashflowAnalysisPage() {
       const amount = getCashflowAmount(tx)
       const metric = ensureBranch(tx.branch_id, tx.branch?.name)
 
+      // Transfer beban: reklasifikasi beban antar cabang, bukan pendapatan/cash flow operasional.
+      if (isBebanTransfer(tx)) {
+        metric.expense += getExpenseContribution(tx)
+        return
+      }
+
       if (tx.transaction_type === 'cash_in') {
         metric.cashIn += amount
         if (tx.source !== 'sales') metric.otherIncome += amount
@@ -600,11 +623,12 @@ export default function CashflowAnalysisPage() {
     const map = new Map<string, { amount: number; count: number }>()
 
     cashflow
-      .filter((tx) => tx.transaction_type === 'cash_out')
+      // Cash out biasa + kredit transfer beban (sisi pengirim) sebagai pengurang.
+      .filter((tx) => tx.transaction_type === 'cash_out' || isBebanTransfer(tx))
       .forEach((tx) => {
         const name = tx.category?.name || 'Tanpa Kategori'
         const existing = map.get(name) || { amount: 0, count: 0 }
-        existing.amount += getCashflowAmount(tx)
+        existing.amount += getExpenseContribution(tx)
         existing.count += 1
         map.set(name, existing)
       })
@@ -618,6 +642,7 @@ export default function CashflowAnalysisPage() {
         pctOfExpense: percent(row.amount, summary.expense),
         pctOfIncome: percent(row.amount, summary.grossIncome),
       }))
+      .filter((row) => row.amount > 0)
       .sort((a, b) => b.amount - a.amount)
   }, [cashflow, summary.expense, summary.grossIncome])
 
@@ -625,7 +650,7 @@ export default function CashflowAnalysisPage() {
     const map = new Map<string, { amount: number; count: number }>()
 
     cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales')
+      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales' && !isBebanTransfer(tx))
       .forEach((tx) => {
         const name = tx.category?.name || 'Cash In Lainnya'
         const existing = map.get(name) || { amount: 0, count: 0 }
@@ -648,7 +673,8 @@ export default function CashflowAnalysisPage() {
 
   const largestExpenses = useMemo(() => {
     return cashflow
-      .filter((tx) => tx.transaction_type === 'cash_out')
+      // Transfer beban internal tidak ditampilkan sebagai beban terbesar.
+      .filter((tx) => tx.transaction_type === 'cash_out' && !isBebanTransfer(tx))
       .sort((a, b) => getCashflowAmount(b) - getCashflowAmount(a))
       .slice(0, 10)
   }, [cashflow])
@@ -685,6 +711,12 @@ export default function CashflowAnalysisPage() {
     cashflow.forEach((tx) => {
       const row = ensureRow(tx.transaction_date)
       const amount = getCashflowAmount(tx)
+
+      // Transfer beban: reklasifikasi beban, bukan pendapatan.
+      if (isBebanTransfer(tx)) {
+        row.expense += getExpenseContribution(tx)
+        return
+      }
 
       if (tx.transaction_type === 'cash_in') {
         row.cashIn += amount

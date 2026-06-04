@@ -429,24 +429,27 @@ async function getRawMaterialCategoryId(supabase: Supabase): Promise<string> {
   }
 
   const categories = data || []
-  const category = categories.find((item) => normalizeName(item.name) === 'bahan-baku')
+  // "Beban Pokok Pendapatan" dan "Pembelian Bahan Baku" diperlakukan sama (HPP).
+  // Kategori kanonik adalah "Beban Pokok Pendapatan".
+  const category = categories.find((item) => normalizeName(item.name) === 'beban-pokok-pendapatan')
     ?? categories.find((item) => normalizeName(item.name) === 'pembelian-bahan-baku')
+    ?? categories.find((item) => normalizeName(item.name) === 'bahan-baku')
 
   if (category) return category.id
 
   const { data: inserted, error: insertError } = await supabase
     .from('cashflow_categories')
     .insert({
-      name: 'Bahan Baku',
+      name: 'Beban Pokok Pendapatan',
       default_type: 'cash_out',
-      description: 'Pengeluaran bahan baku dari import otomatis',
+      description: 'Beban pokok pendapatan / HPP (termasuk pembelian bahan baku)',
       is_active: true,
     })
     .select('id')
     .single()
 
   if (insertError || !inserted) {
-    throw new ImportBahanBakuError('Kategori Bahan Baku belum tersedia.', 500, 'category_missing')
+    throw new ImportBahanBakuError('Kategori Beban Pokok Pendapatan belum tersedia.', 500, 'category_missing')
   }
 
   return inserted.id

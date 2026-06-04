@@ -201,8 +201,10 @@ export default function DashboardPage() {
     { name: 'ShopeeFood', value: totalShopeefood },
   ].filter((c) => c.value > 0)
 
-  const totalCashIn = cashflow.filter((c) => c.transaction_type === 'cash_in').reduce((a, c) => a + c.amount, 0)
-  const totalCashOut = cashflow.filter((c) => c.transaction_type === 'cash_out').reduce((a, c) => a + c.amount, 0)
+  // Transfer beban antar cabang hanya reklasifikasi internal, bukan cash in/out usaha.
+  const operationalCashflow = cashflow.filter((c) => c.source !== 'beban_transfer')
+  const totalCashIn = operationalCashflow.filter((c) => c.transaction_type === 'cash_in').reduce((a, c) => a + c.amount, 0)
+  const totalCashOut = operationalCashflow.filter((c) => c.transaction_type === 'cash_out').reduce((a, c) => a + c.amount, 0)
   const nettCashflow = totalCashIn - totalCashOut
 
   const todayTotal = todayReports.reduce((a, r) => a + r.grand_total_nett_sales, 0)
