@@ -14,6 +14,20 @@ interface Allocation {
   amount: number
 }
 
+function normalizeCategoryName(name?: string | null) {
+  return (name || '').trim().toLowerCase()
+}
+
+function isCourierCategoryName(name?: string | null) {
+  const normalized = normalizeCategoryName(name)
+  return normalized === 'kurir' || normalized === 'beban kurir' || normalized.includes('kurir')
+}
+
+function isCourierExpenseCategory(category: { name: string; default_type: string }) {
+  return (category.default_type === 'cash_out' || category.default_type === 'both')
+    && isCourierCategoryName(category.name)
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -59,6 +73,34 @@ export async function POST(request: Request) {
   if (allocations.some((a) => !a.branch_id || a.amount <= 0)) {
     return NextResponse.json(
       { success: false, message: 'Setiap cabang harus memiliki nominal > 0.' },
+      { status: 400 }
+    )
+  }
+  if (!category_id) {
+    return NextResponse.json(
+      { success: false, message: 'Kategori Beban Kurir wajib dipilih.' },
+      { status: 400 }
+    )
+  }
+
+  const { data: category, error: categoryError } = await supabase
+    .from('cashflow_categories')
+    .select('id,name,default_type')
+    .eq('id', category_id)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .maybeSingle()
+
+  if (categoryError) {
+    return NextResponse.json(
+      { success: false, message: `Gagal memvalidasi kategori: ${categoryError.message}` },
+      { status: 500 }
+    )
+  }
+
+  if (!category || !isCourierExpenseCategory(category)) {
+    return NextResponse.json(
+      { success: false, message: 'Hanya Beban Kurir yang bisa dibagi ke cabang.' },
       { status: 400 }
     )
   }

@@ -67,16 +67,39 @@ function getNominalLabel(tx: CashflowTransaction) {
   return `${prefix}${formatRupiah(getNominalAmount(tx))}`
 }
 
-// Transaksi hasil "Biaya Bersama" (split ke beberapa cabang) selalu punya
-// reference_group_id dengan source manual. Dipakai untuk membedakan, misalnya,
-// biaya kurir yang sudah dibagi ke cabang vs yang belum.
+function normalizeCategoryName(name?: string | null) {
+  return (name || '').trim().toLowerCase()
+}
+
+function isCourierCategoryName(name?: string | null) {
+  const normalized = normalizeCategoryName(name)
+  return normalized === 'kurir' || normalized === 'beban kurir' || normalized.includes('kurir')
+}
+
+function isCourierExpense(tx: CashflowTransaction) {
+  return tx.transaction_type === 'cash_out' && isCourierCategoryName(tx.category?.name)
+}
+
+function isActiveCourierExpense(tx: CashflowTransaction) {
+  return tx.status === 'active' && isCourierExpense(tx)
+}
+
+function canManageCashflowTx(tx: CashflowTransaction) {
+  return tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order'
+}
+
+function canSplitCashflowTx(tx: CashflowTransaction) {
+  return canManageCashflowTx(tx) && isCourierExpense(tx)
+}
+
+// Transaksi hasil pembagian beban kurir selalu punya reference_group_id
+// dengan source manual.
 function isSplitTx(tx: CashflowTransaction) {
   return tx.source === 'manual' && Boolean(tx.reference_group_id)
 }
 
 function SplitStatusBadge({ tx }: { tx: CashflowTransaction }) {
-  // Hanya relevan untuk pengeluaran (cash out) manual.
-  if (tx.transaction_type !== 'cash_out' || tx.source !== 'manual') return null
+  if (!isActiveCourierExpense(tx)) return null
 
   if (isSplitTx(tx)) {
     return (
@@ -223,12 +246,19 @@ export default function CashflowPage() {
         if (filterBranch) query = query.eq('branch_id', filterBranch)
         if (filterType) query = query.eq('transaction_type', filterType as CashflowType)
         if (filterCat) query = query.eq('category_id', filterCat)
-        // Status pembagian (biaya bersama): sudah dibagi = punya reference_group_id.
-        if (filterSplit === 'split') query = query.eq('source', 'manual').not('reference_group_id', 'is', null)
-        if (filterSplit === 'unsplit') query = query.eq('source', 'manual').is('reference_group_id', null)
 
         const { data } = await query
-        return data || []
+        const rows = data || []
+
+        if (filterSplit === 'split') {
+          return rows.filter((tx) => isActiveCourierExpense(tx) && isSplitTx(tx))
+        }
+
+        if (filterSplit === 'unsplit') {
+          return rows.filter((tx) => isActiveCourierExpense(tx) && !isSplitTx(tx))
+        }
+
+        return rows
       },
       { ttlMs: 60_000, force: options.force || Boolean(cached) }
     )
@@ -367,6 +397,11 @@ export default function CashflowPage() {
   }
 
   function openSplitFromTx(tx: CashflowTransaction) {
+    if (!canSplitCashflowTx(tx)) {
+      toastTimerRef('Hanya Beban Kurir yang bisa dibagi ke cabang.', 'error')
+      return
+    }
+
     setSplitSourceTx(tx)
     setSplitModalOpen(true)
   }
@@ -587,11 +622,11 @@ export default function CashflowPage() {
             <span className="hidden sm:inline">Export</span>
           </button>
           <button
-            onClick={() => setSplitModalOpen(true)}
+            onClick={() => { setSplitSourceTx(null); setSplitModalOpen(true) }}
             className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto text-orange-600 border-orange-200 hover:bg-orange-50"
           >
             <Scissors className="w-4 h-4" />
-            Biaya Bersama
+            Bagi Kurir
           </button>
           <button onClick={openAdd} className="btn-primary flex w-full items-center gap-2 sm:w-auto">
             <Plus className="w-4 h-4" /> Tambah Transaksi
@@ -606,7 +641,7 @@ export default function CashflowPage() {
           <SelectFilter value={filterBranch} onChange={setFilterBranch} placeholder="Semua Cabang" options={branches.map((b) => ({ value: b.id, label: b.name }))} />
           <SelectFilter value={filterType} onChange={setFilterType} placeholder="Semua Tipe" options={[{ value: 'cash_in', label: 'Cash In' }, { value: 'cash_out', label: 'Cash Out' }]} />
           <SelectFilter value={filterCat} onChange={setFilterCat} placeholder="Semua Kategori" options={categories.map((c) => ({ value: c.id, label: c.name }))} />
-          <SelectFilter value={filterSplit} onChange={setFilterSplit} placeholder="Semua Pembagian" options={[{ value: 'split', label: 'Sudah Dibagi' }, { value: 'unsplit', label: 'Belum Dibagi' }]} />
+          <SelectFilter value={filterSplit} onChange={setFilterSplit} placeholder="Pembagian Kurir" options={[{ value: 'split', label: 'Kurir Sudah Dibagi' }, { value: 'unsplit', label: 'Kurir Belum Dibagi' }]} />
           <button onClick={() => { load({ force: true }); loadCashPositions({ force: true }) }} className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto">
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
@@ -734,14 +769,16 @@ export default function CashflowPage() {
                     <td className="table-cell"><CashflowStatusBadge status={tx.status} /></td>
                     <td className="table-cell">
                       <div className="flex items-center justify-end gap-1">
-                        {tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order' && (
+                        {canManageCashflowTx(tx) && (
                           <>
                             <button onClick={() => openEdit(tx)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-blue-600" title="Edit">
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => openSplitFromTx(tx)} className="p-1.5 rounded-lg hover:bg-orange-50 text-gray-400 hover:text-orange-600" title="Bagi ke cabang">
-                              <Scissors className="w-3.5 h-3.5" />
-                            </button>
+                            {canSplitCashflowTx(tx) && (
+                              <button onClick={() => openSplitFromTx(tx)} className="p-1.5 rounded-lg hover:bg-orange-50 text-gray-400 hover:text-orange-600" title="Bagi beban kurir ke cabang">
+                                <Scissors className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button onClick={() => setVoidTarget(tx)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600" title="Void">
                               <XCircle className="w-3.5 h-3.5" />
                             </button>
@@ -801,7 +838,7 @@ export default function CashflowPage() {
                   <CashflowSourceLabel tx={tx} />
 
                   <div className="flex flex-wrap justify-end gap-2">
-                    {tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order' && (
+                    {canManageCashflowTx(tx) && (
                       <>
                         <button
                           onClick={() => openEdit(tx)}
@@ -810,13 +847,15 @@ export default function CashflowPage() {
                         >
                           <Pencil className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => openSplitFromTx(tx)}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600"
-                          title="Bagi ke cabang"
-                        >
-                          <Scissors className="w-4 h-4" />
-                        </button>
+                        {canSplitCashflowTx(tx) && (
+                          <button
+                            onClick={() => openSplitFromTx(tx)}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-orange-50 hover:text-orange-600"
+                            title="Bagi beban kurir ke cabang"
+                          >
+                            <Scissors className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => setVoidTarget(tx)}
                           className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"

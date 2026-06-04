@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { X, Scissors, Equal, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { formatRupiah } from '@/lib/utils/format'
 
@@ -36,22 +36,35 @@ interface Props {
   title?: string
 }
 
+function normalizeCategoryName(name?: string | null) {
+  return (name || '').trim().toLowerCase()
+}
+
+function isCourierCategoryName(name?: string | null) {
+  const normalized = normalizeCategoryName(name)
+  return normalized === 'kurir' || normalized === 'beban kurir' || normalized.includes('kurir')
+}
+
 export default function SplitExpenseModal({ branches, categories, onClose, onSuccess, initialValues, title }: Props) {
   const today = new Date().toISOString().slice(0, 10)
+  const courierCategories = useMemo(
+    () => categories.filter(
+      (c) => (c.default_type === 'cash_out' || c.default_type === 'both') && isCourierCategoryName(c.name)
+    ),
+    [categories]
+  )
+  const initialCategoryId = initialValues?.category_id && courierCategories.some((c) => c.id === initialValues.category_id)
+    ? initialValues.category_id ?? ''
+    : courierCategories[0]?.id ?? ''
 
   const [date, setDate] = useState(initialValues?.date ?? today)
   const [description, setDescription] = useState(initialValues?.description ?? '')
-  const [categoryId, setCategoryId] = useState(initialValues?.category_id ?? '')
+  const [categoryId, setCategoryId] = useState(initialCategoryId)
   const [total, setTotal] = useState(initialValues?.total ? String(initialValues.total) : '')
   const [allocations, setAllocations] = useState<Record<string, string>>({})  // branch_id → amount string
   const [checkedBranches, setCheckedBranches] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  // Kategori cash_out saja
-  const cashOutCategories = categories.filter(
-    (c) => c.default_type === 'cash_out' || c.default_type === 'both'
-  )
 
   const totalNum = parseFloat(total.replace(/\D/g, '')) || 0
   const allocatedNum = Array.from(checkedBranches).reduce((sum, bid) => {
@@ -102,6 +115,14 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
       setError('Tanggal dan deskripsi wajib diisi.')
       return
     }
+    if (courierCategories.length === 0) {
+      setError('Kategori Beban Kurir belum tersedia. Tambahkan kategori Kurir di kategori cashflow.')
+      return
+    }
+    if (!categoryId) {
+      setError('Kategori Beban Kurir wajib dipilih.')
+      return
+    }
     if (checkedBranches.size === 0) {
       setError('Pilih minimal 1 cabang.')
       return
@@ -129,7 +150,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
         body: JSON.stringify({
           date,
           description: description.trim(),
-          category_id: categoryId || null,
+          category_id: categoryId,
           allocations: allocList,
         }),
       })
@@ -149,6 +170,12 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
 
   // Tutup modal dengan Escape
   useEffect(() => {
+    if (!categoryId && courierCategories.length > 0) {
+      setCategoryId(courierCategories[0].id)
+    }
+  }, [categoryId, courierCategories])
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
     }
@@ -164,7 +191,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <Scissors className="w-5 h-5 text-orange-600" />
-            <h2 className="text-base font-black text-slate-900">{title ?? 'Biaya Bersama'}</h2>
+            <h2 className="text-base font-black text-slate-900">{title ?? 'Bagi Beban Kurir'}</h2>
           </div>
           <button
             onClick={onClose}
@@ -190,14 +217,15 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Kategori</label>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">Kategori Beban Kurir</label>
                 <select
                   value={categoryId}
                   onChange={(e) => setCategoryId(e.target.value)}
+                  disabled={courierCategories.length === 0}
                   className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
                 >
-                  <option value="">— Tanpa kategori —</option>
-                  {cashOutCategories.map((c) => (
+                  <option value="">{courierCategories.length === 0 ? 'Kategori Kurir tidak tersedia' : 'Pilih kategori Kurir'}</option>
+                  {courierCategories.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
@@ -210,7 +238,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Biaya Kurir, Biaya Operasional, dll."
+                placeholder="Biaya Kurir"
                 required
                 className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
               />
@@ -338,7 +366,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
             </button>
             <button
               type="submit"
-              disabled={saving || !isBalanced || checkedBranches.size === 0}
+              disabled={saving || !isBalanced || checkedBranches.size === 0 || !categoryId}
               className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-orange-600 text-white hover:bg-orange-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving

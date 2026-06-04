@@ -140,6 +140,31 @@ function isBebanTransfer(tx: CashflowTransaction) {
   return tx.source === 'beban_transfer'
 }
 
+function normalizeCategoryName(name?: string | null) {
+  return (name || '').trim().toLowerCase()
+}
+
+function isSalesRevenueCategory(tx: CashflowTransaction) {
+  const name = normalizeCategoryName(tx.category?.name)
+  return name === 'penjualan' || name.startsWith('penjualan ')
+}
+
+function isRevenueCashIn(tx: CashflowTransaction) {
+  return tx.transaction_type === 'cash_in'
+    && !isBebanTransfer(tx)
+    && (tx.source === 'sales' || isSalesRevenueCategory(tx))
+}
+
+function isAdditionalRevenueCashIn(tx: CashflowTransaction) {
+  return isRevenueCashIn(tx) && tx.source !== 'sales'
+}
+
+function isOtherIncomeCashIn(tx: CashflowTransaction) {
+  return tx.transaction_type === 'cash_in'
+    && !isBebanTransfer(tx)
+    && !isRevenueCashIn(tx)
+}
+
 // Kontribusi transaksi ke total beban (contra-beban untuk sisi pengirim transfer).
 // Positif = menambah beban, negatif = mengurangi beban.
 function getExpenseContribution(tx: CashflowTransaction) {
@@ -513,16 +538,20 @@ export default function CashflowAnalysisPage() {
   const pendingSales = useMemo(() => sales.filter((report) => report.status !== 'posted'), [sales])
 
   const summary = useMemo(() => {
-    const revenue = postedSales.reduce((sum, report) => sum + toNumber(report.grand_total_nett_sales), 0)
+    const postedRevenue = postedSales.reduce((sum, report) => sum + toNumber(report.grand_total_nett_sales), 0)
+    const additionalRevenue = cashflow
+      .filter(isAdditionalRevenueCashIn)
+      .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
+    const revenue = postedRevenue + additionalRevenue
     // Transfer beban tidak dihitung sebagai cash in / pendapatan.
     const cashIn = cashflow
       .filter((tx) => tx.transaction_type === 'cash_in' && !isBebanTransfer(tx))
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
-    const salesCashIn = cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source === 'sales')
+    const revenueCashIn = cashflow
+      .filter(isRevenueCashIn)
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
     const otherIncome = cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales' && !isBebanTransfer(tx))
+      .filter(isOtherIncomeCashIn)
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
     // Beban = total cash out, dikurangi kredit transfer beban (sisi pengirim).
     const expense = cashflow.reduce((sum, tx) => sum + getExpenseContribution(tx), 0)
@@ -539,7 +568,7 @@ export default function CashflowAnalysisPage() {
       profitMargin: percent(netProfit, grossIncome),
       expenseRatio: percent(expense, grossIncome),
       cashIn,
-      salesCashIn,
+      revenueCashIn,
       cashOut: expense,
       netCashflow: cashIn - expense,
       cashPosition,
@@ -588,7 +617,11 @@ export default function CashflowAnalysisPage() {
 
       if (tx.transaction_type === 'cash_in') {
         metric.cashIn += amount
-        if (tx.source !== 'sales') metric.otherIncome += amount
+        if (isAdditionalRevenueCashIn(tx)) {
+          metric.revenue += amount
+        } else if (isOtherIncomeCashIn(tx)) {
+          metric.otherIncome += amount
+        }
       } else {
         metric.cashOut += amount
         metric.expense += amount
@@ -650,7 +683,7 @@ export default function CashflowAnalysisPage() {
     const map = new Map<string, { amount: number; count: number }>()
 
     cashflow
-      .filter((tx) => tx.transaction_type === 'cash_in' && tx.source !== 'sales' && !isBebanTransfer(tx))
+      .filter(isOtherIncomeCashIn)
       .forEach((tx) => {
         const name = tx.category?.name || 'Cash In Lainnya'
         const existing = map.get(name) || { amount: 0, count: 0 }
@@ -720,7 +753,11 @@ export default function CashflowAnalysisPage() {
 
       if (tx.transaction_type === 'cash_in') {
         row.cashIn += amount
-        if (tx.source !== 'sales') row.otherIncome += amount
+        if (isAdditionalRevenueCashIn(tx)) {
+          row.revenue += amount
+        } else if (isOtherIncomeCashIn(tx)) {
+          row.otherIncome += amount
+        }
       } else {
         row.cashOut += amount
         row.expense += amount
@@ -773,7 +810,7 @@ export default function CashflowAnalysisPage() {
       rows.push({
         title: 'P&L',
         value: 'Belum Ada Revenue',
-        description: 'Tidak ada sales posted atau cash in lain pada filter ini.',
+        description: 'Tidak ada sales posted, cash in Penjualan, atau pendapatan lain pada filter ini.',
         tone: 'neutral',
         icon: <Scale className="h-4 w-4" />,
       })
@@ -821,7 +858,7 @@ export default function CashflowAnalysisPage() {
       rows.push({
         title: 'Kontributor Sales',
         value: topBranch.branchName,
-        description: `${formatPercentage(topBranch.revenueShare)} dari revenue posted berasal dari cabang ini.`,
+        description: `${formatPercentage(topBranch.revenueShare)} dari revenue berasal dari cabang ini.`,
         tone: topBranch.revenueShare >= 55 && branchMetrics.length > 1 ? 'warning' : 'neutral',
         icon: <Building2 className="h-4 w-4" />,
       })
@@ -874,14 +911,14 @@ export default function CashflowAnalysisPage() {
       ? ` Pengeluaran terbesar adalah ${topExpense.name} sebesar ${formatRupiah(topExpense.amount)} (${formatPercentage(topExpense.pctOfExpense)} dari total beban).`
       : ' Tidak ada pengeluaran aktif pada periode ini.'
     const branchText = !selectedBranch && topBranch
-      ? ` Kontributor sales terbesar adalah ${topBranch.branchName} dengan porsi ${formatPercentage(topBranch.revenueShare)} dari revenue posted.`
+      ? ` Kontributor sales terbesar adalah ${topBranch.branchName} dengan porsi ${formatPercentage(topBranch.revenueShare)} dari revenue.`
       : ''
 
     if (summary.grossIncome <= 0) {
       return {
         title: 'Belum ada income yang bisa dianalisa',
         badge: 'Perlu data',
-        description: `Pada periode ini ${scope} belum memiliki sales posted atau pendapatan lain. Cashflow belum bisa dinilai sebagai untung atau rugi sampai laporan penjualan diposting dan transaksi kas tercatat.${pendingText}`,
+        description: `Pada periode ini ${scope} belum memiliki sales posted, cash in Penjualan, atau pendapatan lain. Cashflow belum bisa dinilai sebagai untung atau rugi sampai laporan penjualan diposting dan transaksi kas tercatat.${pendingText}`,
         tone: 'neutral',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
@@ -962,7 +999,7 @@ export default function CashflowAnalysisPage() {
       'Periode Awal': formatDate(startDate, 'dd/MM/yyyy'),
       'Periode Akhir': formatDate(endDate, 'dd/MM/yyyy'),
       Cabang: filterBranch ? branches.find((branch) => branch.id === filterBranch)?.name || '' : 'Semua Cabang',
-      'Revenue Posted': summary.revenue,
+      'Revenue': summary.revenue,
       'Pendapatan Lain': summary.otherIncome,
       'Income Total': summary.grossIncome,
       'Beban': summary.expense,
@@ -976,7 +1013,7 @@ export default function CashflowAnalysisPage() {
 
     const branchRows = branchMetrics.map((branch) => ({
       Cabang: branch.branchName,
-      'Revenue Posted': branch.revenue,
+      'Revenue': branch.revenue,
       'Pendapatan Lain': branch.otherIncome,
       'Income Total': branch.grossIncome,
       Beban: branch.expense,
@@ -1081,16 +1118,16 @@ export default function CashflowAnalysisPage() {
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
             <MetricCard
-              title="Revenue Posted"
+              title="Revenue"
               value={formatRupiah(summary.revenue)}
-              subtitle={`${summary.postedReportCount} laporan posted`}
+              subtitle={`${summary.postedReportCount} laporan posted + kategori Penjualan`}
               icon={<TrendingUp className="h-5 w-5" />}
               tone="green"
             />
             <MetricCard
               title="Pendapatan Lain"
               value={formatRupiah(summary.otherIncome)}
-              subtitle="Cash in non-sales"
+              subtitle="Cash in non-penjualan"
               icon={<CircleDollarSign className="h-5 w-5" />}
               tone="blue"
             />
@@ -1121,7 +1158,7 @@ export default function CashflowAnalysisPage() {
             <MetricCard
               title="Cash In Periode"
               value={formatRupiah(summary.cashIn)}
-              subtitle={`Sales sync ${formatRupiah(summary.salesCashIn)}`}
+              subtitle={`Cashflow Penjualan ${formatRupiah(summary.revenueCashIn)}`}
               icon={<Banknote className="h-5 w-5" />}
               tone="green"
             />
@@ -1253,7 +1290,7 @@ export default function CashflowAnalysisPage() {
           <section className="card overflow-hidden">
             <div className="border-b border-slate-100 p-4">
               <h3 className="text-base font-bold text-slate-950">P&L per Cabang</h3>
-              <p className="text-xs text-slate-500">Revenue posted + pendapatan lain - beban cash out.</p>
+              <p className="text-xs text-slate-500">Revenue + pendapatan lain - beban cash out.</p>
             </div>
 
             {branchMetrics.length === 0 ? (
@@ -1444,8 +1481,8 @@ export default function CashflowAnalysisPage() {
           {incomeCategories.length > 0 && (
             <section className="card overflow-hidden">
               <div className="border-b border-slate-100 p-4">
-                <h3 className="text-base font-bold text-slate-950">Pendapatan Non-Sales</h3>
-                <p className="text-xs text-slate-500">Cash in manual atau sumber selain sinkronisasi sales.</p>
+                <h3 className="text-base font-bold text-slate-950">Pendapatan Lain</h3>
+                <p className="text-xs text-slate-500">Cash in yang bukan kategori Penjualan.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
                 {incomeCategories.map((category) => (
