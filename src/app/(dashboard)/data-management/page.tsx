@@ -21,6 +21,7 @@ import {
   Package,
   RefreshCw,
   History,
+  ArrowLeftRight,
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ interface PreviewData {
   rawMaterialLogs: number
   kasirSyncQueueItems: number
   kasirImportLogs: number
+  bebanTransfers: number
   grandTotal: number
 }
 
@@ -47,6 +49,7 @@ interface DeleteResult {
   rawMaterialLogs: number
   kasirSyncQueueItems: number
   kasirImportLogs: number
+  bebanTransfers: number
   errors: string[]
 }
 
@@ -138,6 +141,7 @@ export default function DataManagementPage() {
       { count: rawCount },
       { count: kasirSyncCount },
       { count: kasirImportLogsCount },
+      { count: bebanTransferCount },
     ] = await Promise.all([
       // Sales reports
       supabase
@@ -214,6 +218,13 @@ export default function DataManagementPage() {
         .select('*', { count: 'exact', head: true })
         .gte('period_start', startDate)
         .lte('period_start', endDate),
+
+      // Riwayat transfer beban antar cabang
+      supabase
+        .from('beban_transfers')
+        .select('*', { count: 'exact', head: true })
+        .gte('transfer_date', startDate)
+        .lte('transfer_date', endDate),
     ])
 
     setPreviewData({
@@ -227,7 +238,8 @@ export default function DataManagementPage() {
       rawMaterialLogs: rawCount ?? 0,
       kasirSyncQueueItems: kasirSyncCount ?? 0,
       kasirImportLogs: kasirImportLogsCount ?? 0,
-      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0) + (kasirSyncCount ?? 0) + (kasirImportLogsCount ?? 0),
+      bebanTransfers: bebanTransferCount ?? 0,
+      grandTotal: (salesCount ?? 0) + (cfTotal ?? 0) + (rawCount ?? 0) + (kasirSyncCount ?? 0) + (kasirImportLogsCount ?? 0) + (bebanTransferCount ?? 0),
     })
 
     setLoading(false)
@@ -253,6 +265,7 @@ export default function DataManagementPage() {
       rawMaterialLogs: 0,
       kasirSyncQueueItems: 0,
       kasirImportLogs: 0,
+      bebanTransfers: 0,
       errors: [],
     }
 
@@ -320,6 +333,22 @@ export default function DataManagementPage() {
       result.errors.push(`Gagal hapus cashflow manual/lainnya: ${cfRemainingErr.message}`)
     } else {
       result.cashflowTransactions += (deletedCfRemaining ?? []).length
+    }
+
+    // ── STEP 4b: Delete beban_transfers log in date range ──────────────────
+    // Kedua cashflow transfer beban sudah ikut terhapus di STEP 4 (transaction_date
+    // = transfer_date). Di sini hapus baris riwayat transfernya agar tidak orphan.
+    const { data: deletedBebanTransfers, error: bebanTransferErr } = await supabase
+      .from('beban_transfers')
+      .delete()
+      .gte('transfer_date', startDate)
+      .lte('transfer_date', endDate)
+      .select('id')
+
+    if (bebanTransferErr) {
+      result.errors.push(`Gagal hapus riwayat transfer beban: ${bebanTransferErr.message}`)
+    } else {
+      result.bebanTransfers = (deletedBebanTransfers ?? []).length
     }
 
     // ── STEP 5: Delete sales_reports in date range ─────────────────────────
@@ -407,6 +436,7 @@ export default function DataManagementPage() {
           raw_material_import_logs: result.rawMaterialLogs,
           kasir_sync_queue_items_disabled: result.kasirSyncQueueItems,
           kasir_import_logs: result.kasirImportLogs,
+          beban_transfers: result.bebanTransfers,
         },
         errors: result.errors,
       } as Record<string, unknown>,
@@ -440,7 +470,8 @@ export default function DataManagementPage() {
     (deleteResult?.cashflowTransactions ?? 0) +
     (deleteResult?.rawMaterialLogs ?? 0) +
     (deleteResult?.kasirSyncQueueItems ?? 0) +
-    (deleteResult?.kasirImportLogs ?? 0)
+    (deleteResult?.kasirImportLogs ?? 0) +
+    (deleteResult?.bebanTransfers ?? 0)
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -530,6 +561,10 @@ export default function DataManagementPage() {
                 <li className="flex items-center gap-2">
                   <History className="w-4 h-4 flex-shrink-0" />
                   Riwayat Import Kasir (kasir_import_logs)
+                </li>
+                <li className="flex items-center gap-2">
+                  <ArrowLeftRight className="w-4 h-4 flex-shrink-0" />
+                  Riwayat Transfer Beban antar cabang (beban_transfers)
                 </li>
                 <li className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 flex-shrink-0" />
@@ -693,6 +728,20 @@ export default function DataManagementPage() {
                   </span>
                 </div>
 
+                {/* Beban Transfers */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                  <div className="flex items-center gap-3">
+                    <ArrowLeftRight className="w-5 h-5 text-violet-500" />
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">Riwayat Transfer Beban</p>
+                      <p className="text-xs text-slate-500">beban_transfers</p>
+                    </div>
+                  </div>
+                  <span className="text-sm font-bold text-slate-900 bg-white px-3 py-1 rounded-lg border border-slate-200">
+                    {previewData.bebanTransfers.toLocaleString('id')} data
+                  </span>
+                </div>
+
                 {/* Kasir Sync Queue */}
                 <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
                   <div className="flex items-center gap-3">
@@ -774,6 +823,7 @@ export default function DataManagementPage() {
               <li>{previewData.cashflowTotal.toLocaleString('id')} transaksi cashflow</li>
               <li>{previewData.rawMaterialLogs.toLocaleString('id')} log impor bahan baku</li>
               <li>{previewData.kasirImportLogs.toLocaleString('id')} riwayat import kasir</li>
+              <li>{previewData.bebanTransfers.toLocaleString('id')} riwayat transfer beban</li>
               <li>{previewData.kasirSyncQueueItems.toLocaleString('id')} sync kasir terkonfirmasi</li>
             </ul>
             <p className="font-semibold">Tindakan ini TIDAK BISA DIBATALKAN.</p>
@@ -905,6 +955,16 @@ export default function DataManagementPage() {
               </div>
               <span className="text-sm font-bold text-slate-900">
                 {deleteResult.kasirImportLogs.toLocaleString('id')} dihapus
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-xl">
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-violet-500" />
+                <span className="text-sm text-slate-700">Riwayat Transfer Beban</span>
+              </div>
+              <span className="text-sm font-bold text-slate-900">
+                {deleteResult.bebanTransfers.toLocaleString('id')} dihapus
               </span>
             </div>
 
