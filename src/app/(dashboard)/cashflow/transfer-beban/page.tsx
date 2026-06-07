@@ -234,7 +234,7 @@ export default function TransferBebanPage() {
           </div>
 
           {/* Cabang Pengirim + Penerima */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Cabang Pengirim
@@ -252,6 +252,39 @@ export default function TransferBebanPage() {
                 ))}
               </select>
             </div>
+
+            {/* Swap Button (Desktop) */}
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 mt-2 hidden sm:flex items-center justify-center z-10">
+              <button
+                type="button"
+                onClick={() => {
+                  const temp = fromBranch
+                  setFromBranch(toBranch)
+                  setToBranch(temp)
+                }}
+                className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-violet-600 hover:border-violet-300 hover:bg-violet-50 flex items-center justify-center transition-colors shadow-sm"
+                title="Tukar Cabang"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Swap Button (Mobile) */}
+            <div className="sm:hidden flex justify-center -my-2 relative z-10">
+              <button
+                type="button"
+                onClick={() => {
+                  const temp = fromBranch
+                  setFromBranch(toBranch)
+                  setToBranch(temp)
+                }}
+                className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-400 hover:text-violet-600 hover:border-violet-300 hover:bg-violet-50 flex items-center justify-center transition-colors shadow-sm rotate-90"
+                title="Tukar Cabang"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
                 Cabang Penerima

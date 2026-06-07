@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { X, Scissors, Equal, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { X, Scissors, Equal, AlertCircle, CheckCircle2, ChevronsUpDown } from 'lucide-react'
 import { formatRupiah } from '@/lib/utils/format'
 
 interface Branch {
@@ -73,14 +73,36 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
   const remaining = totalNum - allocatedNum
   const isBalanced = checkedBranches.size > 0 && Math.abs(remaining) < 1
 
+  // Derived select-all state
+  const allSelected = branches.length > 0 && checkedBranches.size === branches.length
+  const someSelected = checkedBranches.size > 0 && checkedBranches.size < branches.length
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      // Deselect all — but KEEP allocations so amounts aren't lost
+      setCheckedBranches(new Set())
+    } else {
+      // Select all — initialize allocation for branches without one
+      setAllocations((prev) => {
+        const next = { ...prev }
+        branches.forEach((b) => {
+          if (!next[b.id]) next[b.id] = ''
+        })
+        return next
+      })
+      setCheckedBranches(new Set(branches.map((b) => b.id)))
+    }
+  }
+
   function toggleBranch(bid: string) {
     setCheckedBranches((prev) => {
       const next = new Set(prev)
       if (next.has(bid)) {
+        // Uncheck — KEEP the allocation amount so user doesn't lose it
         next.delete(bid)
       } else {
         next.add(bid)
-        // Set default amount 0 jika belum ada
+        // Set default amount empty jika belum ada
         if (!allocations[bid]) {
           setAllocations((a) => ({ ...a, [bid]: '' }))
         }
@@ -100,6 +122,20 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
       newAlloc[bid] = String(perCabang + (i === 0 ? sisa : 0))
     })
     setAllocations(newAlloc)
+  }
+
+  /** Pilih semua cabang sekaligus bagi rata — 1 klik */
+  function selectAllAndSplit() {
+    if (totalNum <= 0) return
+    const allIds = branches.map((b) => b.id)
+    const perCabang = Math.floor(totalNum / allIds.length)
+    const sisa = totalNum - perCabang * allIds.length
+    const newAlloc: Record<string, string> = { ...allocations }
+    allIds.forEach((bid, i) => {
+      newAlloc[bid] = String(perCabang + (i === 0 ? sisa : 0))
+    })
+    setAllocations(newAlloc)
+    setCheckedBranches(new Set(allIds))
   }
 
   function setAmount(bid: string, val: string) {
@@ -168,7 +204,6 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
     }
   }
 
-  // Tutup modal dengan Escape
   useEffect(() => {
     if (!categoryId && courierCategories.length > 0) {
       setCategoryId(courierCategories[0].id)
@@ -259,30 +294,92 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
 
             {/* Alokasi cabang */}
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-semibold text-slate-700">
-                  Alokasi ke Cabang ({checkedBranches.size} dipilih)
+              {/* Header row: label + controls */}
+              <div className="flex items-center justify-between mb-2 gap-2">
+                <label className="text-xs font-semibold text-slate-700 shrink-0">
+                  Alokasi ke Cabang
+                  <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-bold ${
+                    checkedBranches.size === 0
+                      ? 'bg-slate-100 text-slate-500'
+                      : checkedBranches.size === branches.length
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {checkedBranches.size}/{branches.length}
+                  </span>
                 </label>
-                {checkedBranches.size > 0 && totalNum > 0 && (
-                  <button
-                    type="button"
-                    onClick={bagiRata}
-                    className="flex items-center gap-1 text-xs font-bold text-orange-600 hover:text-orange-800 transition-colors"
-                  >
-                    <Equal className="w-3 h-3" />
-                    Bagi Rata
-                  </button>
-                )}
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Quick action: Pilih Semua & Bagi Rata */}
+                  {totalNum > 0 && !allSelected && (
+                    <button
+                      type="button"
+                      onClick={selectAllAndSplit}
+                      className="flex items-center gap-1 text-xs font-bold text-orange-600 hover:text-orange-800 bg-orange-50 hover:bg-orange-100 px-2 py-1 rounded-lg transition-colors"
+                      title="Pilih semua cabang dan langsung bagi rata"
+                    >
+                      <ChevronsUpDown className="w-3 h-3" />
+                      Semua & Bagi Rata
+                    </button>
+                  )}
+                  {/* Bagi Rata (jika sudah ada pilihan) */}
+                  {checkedBranches.size > 0 && totalNum > 0 && (
+                    <button
+                      type="button"
+                      onClick={bagiRata}
+                      className="flex items-center gap-1 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors"
+                    >
+                      <Equal className="w-3 h-3" />
+                      Bagi Rata
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+                {/* Row: Pilih Semua */}
+                <div
+                  className={`flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer ${
+                    allSelected ? 'bg-orange-50' : 'bg-slate-50'
+                  }`}
+                  onClick={toggleSelectAll}
+                >
+                  {/* Custom indeterminate-style checkbox */}
+                  <div className={`relative w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                    allSelected
+                      ? 'bg-orange-600 border-orange-600'
+                      : someSelected
+                        ? 'bg-amber-400 border-amber-400'
+                        : 'border-slate-300 bg-white'
+                  }`}>
+                    {allSelected && (
+                      <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 10 10" fill="none">
+                        <path d="M1.5 5l2.5 2.5L8.5 2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                    {someSelected && (
+                      <div className="w-2 h-0.5 bg-white rounded-full" />
+                    )}
+                  </div>
+                  <span className="text-sm font-semibold text-slate-700 select-none">
+                    {allSelected ? 'Batal Pilih Semua' : 'Pilih Semua Cabang'}
+                  </span>
+                  {allSelected && (
+                    <span className="ml-auto text-xs text-orange-600 font-medium">✓ Semua dipilih</span>
+                  )}
+                  {someSelected && (
+                    <span className="ml-auto text-xs text-amber-600 font-medium">{checkedBranches.size} dipilih</span>
+                  )}
+                </div>
+
+                {/* Individual branches */}
                 {branches.map((branch) => {
                   const checked = checkedBranches.has(branch.id)
                   return (
                     <div
                       key={branch.id}
                       className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${
-                        checked ? 'bg-orange-50' : 'bg-white'
+                        checked ? 'bg-orange-50' : 'bg-white hover:bg-slate-50'
                       }`}
                     >
                       <input
@@ -298,24 +395,40 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
                       >
                         {branch.name}
                       </label>
-                      {checked && (
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={
-                            allocations[branch.id]
-                              ? Number(allocations[branch.id]).toLocaleString('id-ID')
-                              : ''
+                      {/* Selalu tampilkan input amount jika branch pernah dipilih atau sedang dipilih */}
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={
+                          allocations[branch.id]
+                            ? Number(allocations[branch.id]).toLocaleString('id-ID')
+                            : ''
+                        }
+                        onChange={(e) => setAmount(branch.id, e.target.value)}
+                        onClick={() => {
+                          // Auto-check jika user langsung klik input
+                          if (!checkedBranches.has(branch.id)) {
+                            toggleBranch(branch.id)
                           }
-                          onChange={(e) => setAmount(branch.id, e.target.value)}
-                          placeholder="0"
-                          className="w-28 text-right border border-slate-200 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                        />
-                      )}
+                        }}
+                        placeholder="0"
+                        className={`w-28 text-right border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 transition-opacity ${
+                          checked
+                            ? 'border-slate-200 opacity-100'
+                            : 'border-slate-100 opacity-40 cursor-pointer'
+                        }`}
+                      />
                     </div>
                   )
                 })}
               </div>
+
+              {/* Helper text */}
+              {checkedBranches.size === 0 && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Centang cabang yang mendapatkan alokasi biaya, atau gunakan <strong>Semua & Bagi Rata</strong> untuk langsung bagi rata ke semua cabang.
+                </p>
+              )}
             </div>
 
             {/* Ringkasan alokasi */}
@@ -371,7 +484,11 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
             >
               {saving
                 ? 'Menyimpan…'
-                : `Simpan (${checkedBranches.size} cabang)`}
+                : checkedBranches.size === 0
+                  ? 'Simpan (0 cabang)'
+                  : isBalanced
+                    ? `Simpan (${checkedBranches.size} cabang) ✓`
+                    : `Simpan (${checkedBranches.size} cabang)`}
             </button>
           </div>
         </form>
