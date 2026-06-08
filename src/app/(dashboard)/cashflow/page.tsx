@@ -11,6 +11,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
 import SplitExpenseModal from './SplitExpenseModal'
+import ExportArusKasModal from './ExportArusKasModal'
 import { CashflowTypeBadge, CashflowStatusBadge } from '@/components/ui/Badge'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -191,7 +192,15 @@ export default function CashflowPage() {
 
   async function handleExport() {
     const { exportCashflowToExcel } = await import('@/lib/utils/export')
-    exportCashflowToExcel(transactions, { cashPositions, positionStartDate: startDate, positionEndDate: endDate })
+    const branchDisplayName = filterBranch
+      ? (branches.find((b) => b.id === filterBranch)?.name ?? '')
+      : ''
+    await exportCashflowToExcel(transactions, {
+      cashPositions,
+      positionStartDate: startDate,
+      positionEndDate: endDate,
+      branchName: branchDisplayName,
+    })
   }
 
   const today = new Date()
@@ -203,6 +212,7 @@ export default function CashflowPage() {
   const [filterSplit, setFilterSplit] = useState('') // '' | 'split' | 'unsplit'
 
   const [modalOpen, setModalOpen] = useState(false)
+  const [exportArusKasOpen, setExportArusKasOpen] = useState(false)
   const [splitModalOpen, setSplitModalOpen] = useState(false)
   const [splitSourceTx, setSplitSourceTx] = useState<CashflowTransaction | null>(null)
   const [editTx, setEditTx] = useState<CashflowTransaction | null>(null)
@@ -622,6 +632,13 @@ export default function CashflowPage() {
             <span className="hidden sm:inline">Export</span>
           </button>
           <button
+            onClick={() => setExportArusKasOpen(true)}
+            className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Export Arus Kas</span>
+          </button>
+          <button
             onClick={() => { setSplitSourceTx(null); setSplitModalOpen(true) }}
             className="btn-outline flex w-full items-center gap-1.5 text-sm sm:w-auto text-orange-600 border-orange-200 hover:bg-orange-50"
           >
@@ -958,6 +975,14 @@ export default function CashflowPage() {
         reason={deleteReason}
         onReasonChange={setDeleteReason}
       />
+
+      {/* Export Arus Kas Modal */}
+      {exportArusKasOpen && (
+        <ExportArusKasModal
+          branches={branches}
+          onClose={() => setExportArusKasOpen(false)}
+        />
+      )}
 
       {/* Split Expense Modal */}
       {splitModalOpen && (
