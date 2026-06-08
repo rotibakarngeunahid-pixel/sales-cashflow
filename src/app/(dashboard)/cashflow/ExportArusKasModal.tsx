@@ -2,8 +2,8 @@
 
 import { useState } from 'react'
 import { X, FileDown, Loader2 } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
-import type { Branch, CashflowTransaction } from '@/types/database'
+import { saveAs } from 'file-saver'
+import type { Branch } from '@/types/database'
 
 const MONTH_NAMES_ID = [
   'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -26,6 +26,11 @@ export default function ExportArusKasModal({ branches, onClose }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const branchName = branches.find((b) => b.id === branchId)?.name ?? 'Cabang'
+  const previewFilename = branchId
+    ? `Arus_Kas_${branchName.replace(/\s+/g, '_')}_${MONTH_NAMES_ID[month - 1]}_${year}.xlsx`
+    : ''
+
   async function handleExport() {
     if (!branchId) {
       setError('Pilih cabang terlebih dahulu.')
@@ -34,30 +39,19 @@ export default function ExportArusKasModal({ branches, onClose }: Props) {
     setLoading(true)
     setError('')
     try {
-      const supabase = createClient()
-      const mm = String(month).padStart(2, '0')
-      const startDate = `${year}-${mm}-01`
-      const lastDay = new Date(year, month, 0).getDate()
-      const endDate = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`
+      const response = await fetch('/api/cashflow/export-arus-kas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_id: branchId, year, month, branch_name: branchName }),
+      })
 
-      const { data, error: fetchError } = await supabase
-        .from('cashflow_transactions')
-        .select('*, branch:branches(id,name), category:cashflow_categories(id,name)')
-        .eq('branch_id', branchId)
-        .eq('status', 'active')
-        .gte('transaction_date', startDate)
-        .lte('transaction_date', endDate)
-        .order('transaction_date', { ascending: true })
-        .order('created_at', { ascending: true })
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: 'Export gagal.' }))
+        throw new Error(errData.error ?? 'Export gagal.')
+      }
 
-      if (fetchError) throw new Error(fetchError.message)
-
-      const txs = (data ?? []) as CashflowTransaction[]
-      const branchName = branches.find((b) => b.id === branchId)?.name ?? 'Cabang'
-
-      const { exportArusKas } = await import('@/lib/utils/export')
-      await exportArusKas(txs, { branchName, year, month })
-
+      const blob = await response.blob()
+      saveAs(blob, previewFilename)
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Gagal export.')
@@ -124,9 +118,11 @@ export default function ExportArusKasModal({ branches, onClose }: Props) {
             </div>
           </div>
 
-          <p className="text-xs text-gray-500">
-            File: <span className="font-medium text-gray-700">Arus_Kas_{branches.find((b) => b.id === branchId)?.name?.replace(/\s+/g, '_') ?? 'Cabang'}_{MONTH_NAMES_ID[month - 1]}_{year}.xlsx</span>
-          </p>
+          {previewFilename && (
+            <p className="text-xs text-gray-500">
+              File: <span className="font-medium text-gray-700">{previewFilename}</span>
+            </p>
+          )}
 
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
