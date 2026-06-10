@@ -164,7 +164,7 @@ export default function SplitExpenseModal({ branches, categories, onClose, onSuc
       return
     }
     if (!isBalanced) {
-      setError(`Selisih Rp ${formatRupiah(Math.abs(remaining))} — pastikan total alokasi sama dengan total biaya.`)
+      setError(`Selisih ${formatRupiah(Math.abs(remaining))} — pastikan total alokasi sama dengan total biaya.`)
       return
     }
 

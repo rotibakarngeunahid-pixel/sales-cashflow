@@ -99,50 +99,39 @@ export default function UsersPage() {
   async function handleAddUser(data: AddUserForm) {
     setSaving(true)
     setError(null)
-    const supabase = createClient()
 
-    // Use Supabase Admin invite (client-side creates via signup)
-    // Since we can't use admin API from client, we create via signup
-    // The profile will be created via trigger
-    const { error: signupError } = await supabase.auth.signUp({
-      email: data.email,
-      password: data.password,
-      options: {
-        data: {
+    // User dibuat lewat API server-side (service role) supaya sesi owner
+    // tidak tergantikan oleh sesi user baru (efek samping auth.signUp di client).
+    try {
+      const res = await fetch('/api/users/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: data.email,
+          password: data.password,
+          username: data.username,
           full_name: data.full_name,
           role: data.role,
-        },
-      },
-    })
+        }),
+      })
+      const json = await res.json() as { success: boolean; message?: string }
 
-    if (signupError) {
-      setError(signupError.message)
+      if (!res.ok || !json.success) {
+        setError(json.message || 'Gagal membuat user baru.')
+        setSaving(false)
+        return
+      }
+    } catch {
+      setError('Gagal terhubung ke server.')
       setSaving(false)
       return
     }
-
-    // Update profile with username, role, full_name
-    setTimeout(async () => {
-      const { data: newUser } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', data.email)
-        .single()
-
-      if (newUser) {
-        await supabase.from('profiles').update({
-          full_name: data.full_name,
-          username: data.username.toLowerCase(),
-          role: data.role,
-        }).eq('id', newUser.id)
-      }
-    }, 1000)
 
     setSaving(false)
     setAddModalOpen(false)
     addForm.reset()
     invalidateCachedData('users:')
-    setTimeout(() => load({ force: true }), 1500)
+    load({ force: true })
   }
 
   async function handleEditUser(data: EditUserForm) {

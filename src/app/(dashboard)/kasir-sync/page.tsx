@@ -16,20 +16,26 @@ export default async function KasirSyncPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // Ambil statistik queue secara paralel
-  const [pendingResult, confirmedResult, rejectedResult, recentBatchesResult, lastBatchResult] =
+  // Ambil statistik queue secara paralel (count murni — tidak terkena limit 1000 baris)
+  const [pendingPenjualanResult, pendingKasKeluarResult, confirmedResult, rejectedResult, recentBatchesResult, lastBatchResult] =
     await Promise.all([
       supabase
         .from('kasir_sync_queue')
-        .select('id, item_type', { count: 'exact' })
-        .eq('status', 'pending'),
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+        .eq('item_type', 'penjualan'),
       supabase
         .from('kasir_sync_queue')
-        .select('id', { count: 'exact' })
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+        .eq('item_type', 'kas_keluar'),
+      supabase
+        .from('kasir_sync_queue')
+        .select('id', { count: 'exact', head: true })
         .eq('status', 'confirmed'),
       supabase
         .from('kasir_sync_queue')
-        .select('id', { count: 'exact' })
+        .select('id', { count: 'exact', head: true })
         .eq('status', 'rejected'),
       supabase
         .from('kasir_sync_batches')
@@ -45,9 +51,9 @@ export default async function KasirSyncPage() {
         .maybeSingle(),
     ])
 
-  const pendingCount = pendingResult.count ?? 0
-  const pendingPenjualan = pendingResult.data?.filter((r) => r.item_type === 'penjualan').length ?? 0
-  const pendingKasKeluar = pendingResult.data?.filter((r) => r.item_type === 'kas_keluar').length ?? 0
+  const pendingPenjualan = pendingPenjualanResult.count ?? 0
+  const pendingKasKeluar = pendingKasKeluarResult.count ?? 0
+  const pendingCount = pendingPenjualan + pendingKasKeluar
   const confirmedCount = confirmedResult.count ?? 0
   const rejectedCount = rejectedResult.count ?? 0
   const recentBatches = recentBatchesResult.data ?? []

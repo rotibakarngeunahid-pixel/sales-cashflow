@@ -7,14 +7,23 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300  // 5 menit (Vercel Pro)
 
 // =============================================
-// POST — Tarik data kasir ke antrian (pull)
+// POST / GET — Tarik data kasir ke antrian (pull)
 //
 // Bisa dipanggil oleh:
-//   1. Vercel Cron Job — Authorization: Bearer {CRON_SECRET}
-//   2. User manual (owner) — session cookie
+//   1. Vercel Cron Job — HTTP GET + Authorization: Bearer {CRON_SECRET}
+//      (Vercel Cron selalu memanggil dengan method GET)
+//   2. User manual (owner) — POST + session cookie
 // =============================================
 
 export async function POST(request: Request) {
+  return handlePull(request)
+}
+
+export async function GET(request: Request) {
+  return handlePull(request)
+}
+
+async function handlePull(request: Request) {
   const authHeader = request.headers.get('Authorization')
   const cronSecret = process.env.CRON_SECRET
 

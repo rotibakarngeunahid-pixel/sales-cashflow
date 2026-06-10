@@ -61,8 +61,15 @@ export default function KasirSyncReviewPage() {
 
   const [branches, setBranches] = useState<Branch[]>([])
 
-  // Filters
+  // Filters — status awal bisa dikirim lewat URL (?status=confirmed dll.)
   const [statusFilter, setStatusFilter] = useState<ItemStatus | 'all'>('pending')
+
+  useEffect(() => {
+    const param = new URLSearchParams(window.location.search).get('status')
+    if (param === 'confirmed' || param === 'rejected' || param === 'all') {
+      setStatusFilter(param)
+    }
+  }, [])
   const [typeFilter, setTypeFilter] = useState<ItemType | 'all'>('all')
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)

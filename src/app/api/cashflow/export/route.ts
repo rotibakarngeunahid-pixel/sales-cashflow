@@ -38,11 +38,9 @@ export async function POST(request: NextRequest) {
 
   // ── Shared helpers ─────────────────────────────────────────────────
   function fmtDate(dateStr: string): string {
-    try {
-      const [y, m, d] = dateStr.split('-')
-      const months = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ags','Sep','Okt','Nov','Des']
-      return `${d}/${m}/${y}`
-    } catch { return dateStr }
+    const [y, m, d] = dateStr.split('-')
+    if (!y || !m || !d) return dateStr
+    return `${d}/${m}/${y}`
   }
 
   function fmtRp(n: number): string {

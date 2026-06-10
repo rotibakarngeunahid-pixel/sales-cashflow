@@ -58,7 +58,7 @@ export function toWITADate(dateStr: string): Date {
   const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(dateStr.trim())
   if (hasTimezone) {
     const utcMs = new Date(dateStr).getTime()
-    return new Date(utcMs + WITA_OFFSET_MS - new Date().getTimezoneOffset() * 60_000 + new Date().getTimezoneOffset() * 60_000)
+    return new Date(utcMs + WITA_OFFSET_MS)
   }
   // Tidak ada timezone → anggap WITA, parse literal
   try {

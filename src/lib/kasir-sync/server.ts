@@ -860,6 +860,32 @@ async function confirmKasKeluar(
 
   const isSplit = targets.length > 1
   const baseImportKey = makeSyncExpenseKey(item.cabang, item.kasir_id)
+
+  // Cek apakah expense ini sudah pernah diimport sebagai SPLIT (mis. lewat
+  // import manual). Kalau ya, cukup tandai item antrian sebagai confirmed
+  // tanpa membuat transaksi baru — mencegah double-count.
+  if (!/[%_,]/.test(item.kasir_id)) {
+    const { data: splitExisting } = await supabase
+      .from('cashflow_transactions')
+      .select('id')
+      .like('import_key', `kasir-expenses:%:${item.kasir_id}:split:%`)
+      .eq('status', 'active')
+      .limit(1)
+
+    if (splitExisting && splitExisting.length > 0) {
+      await supabase
+        .from('kasir_sync_queue')
+        .update({
+          status: 'confirmed',
+          confirmed_at: new Date().toISOString(),
+          confirmed_by: userId,
+          cashflow_transaction_id: splitExisting[0].id,
+        })
+        .eq('id', item.id)
+      return
+    }
+  }
+
   const categoryId = item.kategori
     ? matchCategoryByKasirName(categories, item.kategori) ??
       findCategory(categories, 'cash_out', ['Lainnya'])
@@ -979,7 +1005,7 @@ export async function rejectQueueItems(
 ): Promise<{ rejected: number; errors: string[] }> {
   if (ids.length === 0) return { rejected: 0, errors: [] }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('kasir_sync_queue')
     .update({
       status: 'rejected',
@@ -989,12 +1015,13 @@ export async function rejectQueueItems(
     })
     .in('id', ids)
     .eq('status', 'pending')
+    .select('id')
 
   if (error) {
     return { rejected: 0, errors: [error.message] }
   }
 
-  return { rejected: ids.length, errors: [] }
+  return { rejected: data?.length ?? 0, errors: [] }
 }
 
 // =============================================

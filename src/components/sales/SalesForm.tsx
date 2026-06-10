@@ -190,7 +190,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     const user = session?.user
 
     const gross = Number(data.qris_gross) || 0
-    const mdr = Math.round(gross * QRIS_MDR_RATE)
+    // Hormati toggle MDR — kalkulasi simpan harus sama dengan preview di layar
+    const mdr = qrisMdrEnabled ? Math.round(gross * QRIS_MDR_RATE) : 0
     const nett = gross - mdr
 
     const computed = calculateSales({

@@ -12,6 +12,7 @@ import { getOrFetchCached } from '@/lib/utils/client-cache'
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/sales/input': 'Input Penjualan',
+  '/sales/import': 'Import Penjualan',
   '/sales/reports': 'Laporan Penjualan',
   '/sales/analysis': 'Analisa Sales',
   '/cashflow': 'Cashflow',
@@ -20,6 +21,9 @@ const pageTitles: Record<string, string> = {
   '/cashflow/transfer-beban': 'Transfer Beban Pokok',
   '/cashflow/analysis': 'Analisa Cashflow',
   '/cashflow/categories': 'Kategori Cashflow',
+  '/kasir-import': 'Import dari POS',
+  '/kasir-sync': 'Sinkronisasi Kasir',
+  '/kasir-sync/review': 'Tinjau Antrian Kasir',
   '/branches': 'Manajemen Cabang',
   '/users': 'User Management',
   '/audit-log': 'Audit Log',

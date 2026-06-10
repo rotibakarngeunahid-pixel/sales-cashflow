@@ -396,6 +396,27 @@ async function loadExistingImportKeys(supabase: Supabase, keys: string[]): Promi
   return new Set((data || []).map((r) => r.import_key || ''))
 }
 
+/**
+ * Deteksi expense yang sudah pernah diimport sebagai SPLIT ke beberapa cabang.
+ * Split memakai import_key berbentuk `...:{expenseId}:split:{branchId}`, sehingga
+ * pengecekan exact-match pada base key tidak menemukannya.
+ */
+async function loadSplitImportedExpenseIds(supabase: Supabase, expenseIds: string[]): Promise<Set<string>> {
+  // Karakter wildcard LIKE pada ID dilewati agar pola tidak salah cocok
+  const ids = Array.from(new Set(expenseIds)).filter((id) => id && !/[%_,]/.test(id))
+  if (ids.length === 0) return new Set()
+
+  const orFilter = ids.map((id) => `import_key.like.kasir-expenses:%:${id}:split:%`).join(',')
+  const { data } = await supabase
+    .from('cashflow_transactions')
+    .select('import_key')
+    .eq('status', 'active')
+    .or(orFilter)
+
+  const keys = (data || []).map((r) => r.import_key || '')
+  return new Set(ids.filter((id) => keys.some((key) => key.includes(`:${id}:split:`))))
+}
+
 // =============================================
 // SALES PREVIEW
 // =============================================
@@ -531,6 +552,7 @@ export async function importSales(
   let totalSuccess = 0
   let totalFailed  = 0
   let totalAmount  = 0
+  let totalDupSkipped = 0
   const errors: string[] = []
 
   for (const item of newItems) {
@@ -575,6 +597,7 @@ export async function importSales(
 
     if (error) {
       if (error.message.toLowerCase().includes('unique') || error.message.toLowerCase().includes('duplicate')) {
+        totalDupSkipped++
         continue
       }
       totalFailed++
@@ -601,7 +624,7 @@ export async function importSales(
   }
 
   const totalSkipped =
-    preview.items.filter((i) => i.status === 'duplicate' || i.status === 'skipped_payment' || i.status === 'branch_not_found').length
+    preview.items.filter((i) => i.status === 'duplicate' || i.status === 'skipped_payment' || i.status === 'branch_not_found').length + totalDupSkipped
 
   const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'penjualan' })
 
@@ -697,13 +720,16 @@ export async function getExpensesPreview(
   }
 
   const importKeys   = branchFiltered.map((item) => makeExpenseImportKey(item.branchName, item.expenseId))
-  const existingKeys = await loadExistingImportKeys(supabase, importKeys)
+  const [existingKeys, splitImportedIds] = await Promise.all([
+    loadExistingImportKeys(supabase, importKeys),
+    loadSplitImportedExpenseIds(supabase, branchFiltered.map((item) => item.expenseId)),
+  ])
 
   const items: KasirExpensePreviewItem[] = branchFiltered.map((item) => {
     const importKey       = makeExpenseImportKey(item.branchName, item.expenseId)
     const matchedBranch   = matchBranch(item.branchName, branches, mappings)
     const localCategoryId = matchCategory(item.category || item.expenseName, categories, 'cash_out')
-    const isDuplicate     = existingKeys.has(importKey)
+    const isDuplicate     = existingKeys.has(importKey) || splitImportedIds.has(item.expenseId)
 
     let status: KasirExpensePreviewItem['status']
     if (!matchedBranch) {
@@ -781,6 +807,7 @@ export async function importExpenses(
   let totalSuccess = 0
   let totalFailed  = 0
   let totalAmount  = 0
+  let totalDupSkipped = 0
   const errors: string[] = []
 
   for (const item of newItems) {
@@ -820,11 +847,14 @@ export async function importExpenses(
     }
 
     let partialFailed = false
+    let insertedCount = 0
 
     for (const target of targets) {
       const isplit    = targets.length > 1
+      // Basis key selalu memakai cabang ASLI dari kasir agar konsisten dengan
+      // skema kasir-sync dan bisa dideteksi ulang oleh preview (dedup).
       const importKey = isplit
-        ? `${makeExpenseImportKey(target.branchName, item.expenseId)}:split:${target.branchId}`
+        ? `${makeExpenseImportKey(item.branchName, item.expenseId)}:split:${target.branchId}`
         : makeExpenseImportKey(item.branchName, item.expenseId)
 
       const description = isplit
@@ -881,6 +911,7 @@ export async function importExpenses(
       }
 
       totalAmount += target.amount
+      insertedCount++
 
       if (inserted) {
         try {
@@ -899,6 +930,9 @@ export async function importExpenses(
 
     if (partialFailed) {
       totalFailed++
+    } else if (insertedCount === 0) {
+      // Semua target sudah ada di database (duplikat) — jangan dihitung sukses
+      totalDupSkipped++
     } else {
       totalSuccess++
     }
@@ -906,7 +940,7 @@ export async function importExpenses(
 
   const totalSkipped = preview.items.filter(
     (i) => i.status === 'duplicate' || i.status === 'void_skipped' || i.status === 'branch_not_found'
-  ).length
+  ).length + totalDupSkipped
 
   const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'kas keluar' })
 
