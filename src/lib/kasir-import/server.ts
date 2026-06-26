@@ -10,6 +10,7 @@ import {
   normalizePaymentMethod,
   normalizeBranchName,
   isSetoranTunai,
+  isKurirExpense,
   makeSaleImportKey,
   makeExpenseImportKey,
   distributeSplitAmounts,
@@ -735,8 +736,14 @@ export async function getExpensesPreview(
     const localCategoryId = matchCategory(item.category || item.expenseName, categories, 'cash_out')
     const isDuplicate     = existingKeys.has(importKey) || splitImportedIds.has(item.expenseId)
 
+    // Auto-split kurir: biaya pengiriman dibagi rata ke semua cabang aktif
+    const isKurir = isKurirExpense(item.category, item.expenseName)
+
     let status: KasirExpensePreviewItem['status']
-    if (!matchedBranch) {
+    if (isKurir) {
+      // Kurir selalu bisa diimport (split ke semua cabang), tidak bergantung pada matchedBranch
+      status = isDuplicate ? 'duplicate' : 'new'
+    } else if (!matchedBranch) {
       status = 'branch_not_found'
     } else if (isDuplicate) {
       status = 'duplicate'
@@ -744,11 +751,26 @@ export async function getExpensesPreview(
       status = 'new'
     }
 
-    const defaultMapping: KasirExpenseMappingConfig = {
-      mode: 'original',
-      targets: matchedBranch
-        ? [{ branchId: matchedBranch.id, branchName: matchedBranch.name, amount: item.amount }]
-        : [],
+    let defaultMapping: KasirExpenseMappingConfig
+
+    if (isKurir && branches.length > 0) {
+      const splitAmounts = distributeSplitAmounts(item.amount, branches.length)
+      const kurirTargets: MappingTarget[] = branches.map((branch, idx) => ({
+        branchId:   branch.id,
+        branchName: branch.name,
+        amount:     splitAmounts[idx],
+      }))
+      defaultMapping = {
+        mode:    'split_equal',
+        targets: kurirTargets,
+      }
+    } else {
+      defaultMapping = {
+        mode: 'original',
+        targets: matchedBranch
+          ? [{ branchId: matchedBranch.id, branchName: matchedBranch.name, amount: item.amount }]
+          : [],
+      }
     }
 
     return {
@@ -1063,13 +1085,15 @@ export async function importCombined(
     )
     expenseItems = newItems
       .map((item) => ({
-        importKey:   item.importKey,
-        expenseName: item.expenseName,
-        branchName:  item.branchName,
-        category:    item.category,
-        amount:      item.amount,
-        dateWITA:    item.dateWITA,
-        recordedBy:  item.recordedBy,
+        importKey:    item.importKey,
+        expenseName:  item.expenseName,
+        branchName:   item.branchName,
+        category:     item.category,
+        amount:       item.amount,
+        dateWITA:     item.dateWITA,
+        recordedBy:   item.recordedBy,
+        isSplitKurir: item.mapping.mode === 'split_equal',
+        splitCount:   item.mapping.mode === 'split_equal' ? item.mapping.targets.length : undefined,
       }))
       .sort((a, b) => a.branchName.localeCompare(b.branchName) || a.dateWITA.localeCompare(b.dateWITA))
 
@@ -1222,13 +1246,15 @@ export async function previewCombined(
 
     expenseItems = newItems
       .map((item) => ({
-        importKey:   item.importKey,
-        expenseName: item.expenseName,
-        branchName:  item.branchName,
-        category:    item.category,
-        amount:      item.amount,
-        dateWITA:    item.dateWITA,
-        recordedBy:  item.recordedBy,
+        importKey:    item.importKey,
+        expenseName:  item.expenseName,
+        branchName:   item.branchName,
+        category:     item.category,
+        amount:       item.amount,
+        dateWITA:     item.dateWITA,
+        recordedBy:   item.recordedBy,
+        isSplitKurir: item.mapping.mode === 'split_equal',
+        splitCount:   item.mapping.mode === 'split_equal' ? item.mapping.targets.length : undefined,
       }))
       .sort((a, b) => a.branchName.localeCompare(b.branchName) || a.dateWITA.localeCompare(b.dateWITA))
 

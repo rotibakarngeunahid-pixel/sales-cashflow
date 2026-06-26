@@ -366,7 +366,14 @@ function CombinedPreviewPanel({
                   return (
                     <tr key={item.importKey} className={cn('transition-colors', isExcluded ? 'bg-slate-50 opacity-50' : 'hover:bg-slate-50')}>
                       <td className="px-4 py-2.5">
-                        <p className={cn('font-semibold', isExcluded ? 'line-through text-slate-400' : 'text-slate-950')}>{item.expenseName}</p>
+                        <p className={cn('font-semibold', isExcluded ? 'line-through text-slate-400' : 'text-slate-950')}>
+                          {item.expenseName}
+                          {item.isSplitKurir && (
+                            <span className="ml-1 inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+                              Dibagi {item.splitCount} cabang
+                            </span>
+                          )}
+                        </p>
                         <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
                       </td>
                       <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
@@ -630,7 +637,14 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
                 {expenseItems.map((item, i) => (
                   <tr key={i} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5">
-                      <p className="font-semibold text-slate-950">{item.expenseName}</p>
+                      <p className="font-semibold text-slate-950">
+                        {item.expenseName}
+                        {item.isSplitKurir && (
+                          <span className="ml-1 inline-flex items-center rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700">
+                            Dibagi {item.splitCount} cabang
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-slate-400">{formatDate(item.dateWITA)}</p>
                     </td>
                     <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>

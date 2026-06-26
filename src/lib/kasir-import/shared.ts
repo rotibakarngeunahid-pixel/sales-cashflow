@@ -167,13 +167,15 @@ export interface SaleBranchDetail {
 }
 
 export interface ExpenseItemDetail {
-  importKey:   string
-  expenseName: string
-  branchName:  string
-  category:    string
-  amount:      number
-  dateWITA:    string
-  recordedBy:  string
+  importKey:    string
+  expenseName:  string
+  branchName:   string
+  category:     string
+  amount:       number
+  dateWITA:     string
+  recordedBy:   string
+  isSplitKurir?: boolean   // true jika pengeluaran kurir di-split rata ke semua cabang
+  splitCount?:   number    // jumlah cabang yang dituju saat split
 }
 
 export interface CombinedImportResult {
@@ -226,6 +228,24 @@ export function isSetoranTunai(...values: Array<string | null | undefined>): boo
     if (!value) return false
     const normalized = value.toLowerCase().replace(/[_\s]+/g, ' ').trim()
     return normalized === 'setoran tunai' || normalized === 'setoran'
+  })
+}
+
+// Deteksi pengeluaran kurir: biaya pengiriman shared cost yang harus dibagi rata.
+// Cek kategori/nama kas keluar — toleran terhadap variasi penulisan
+// ("Kurir", "Biaya Kurir", "Ongkir", "Ongkos Kirim", "Biaya Pengiriman", "Pengiriman").
+export function isKurirExpense(...values: Array<string | null | undefined>): boolean {
+  return values.some((value) => {
+    if (!value) return false
+    const normalized = value.toLowerCase().replace(/[_\s]+/g, ' ').trim()
+    return (
+      normalized === 'kurir' ||
+      normalized.includes('kurir') ||
+      normalized === 'ongkir' ||
+      normalized.includes('ongkos kirim') ||
+      normalized.includes('biaya pengiriman') ||
+      normalized === 'pengiriman'
+    )
   })
 }
 
