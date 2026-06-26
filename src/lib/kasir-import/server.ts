@@ -9,6 +9,7 @@ import {
   KASIR_SOURCE_LABEL,
   normalizePaymentMethod,
   normalizeBranchName,
+  isSetoranTunai,
   makeSaleImportKey,
   makeExpenseImportKey,
   distributeSplitAmounts,
@@ -707,11 +708,14 @@ export async function getExpensesPreview(
   const nonVoid  = normalized.filter((item) => !item.isVoid)
   const voidCount = normalized.length - nonVoid.length
 
-  const branchFiltered = params.branchId
-    ? nonVoid.filter((item) => matchBranch(item.branchName, branches, mappings)?.id === params.branchId)
-    : nonVoid
+  // Exclude setoran tunai: internal cash transfer, not an operational expense
+  const operational = nonVoid.filter((item) => !isSetoranTunai(item.category, item.expenseName))
 
-  if (branchFiltered.length === 0 && nonVoid.length > 0) {
+  const branchFiltered = params.branchId
+    ? operational.filter((item) => matchBranch(item.branchName, branches, mappings)?.id === params.branchId)
+    : operational
+
+  if (branchFiltered.length === 0 && operational.length > 0) {
     throw new KasirImportError(
       'Tidak ada data kas keluar untuk cabang yang dipilih.',
       404,

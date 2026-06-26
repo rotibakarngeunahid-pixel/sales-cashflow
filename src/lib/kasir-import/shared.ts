@@ -218,6 +218,17 @@ export function shouldSkipPaymentMethod(raw: string): boolean {
   return SKIP_PAYMENT_METHODS.some((alias) => lower.includes(alias))
 }
 
+// Exclude setoran tunai: internal cash transfer (outlet → HQ), not an operational expense.
+// Cek kategori/nama kas keluar — toleran terhadap variasi penulisan
+// ("Setoran Tunai", "SETORAN TUNAI", "setoran_tunai", "setoran").
+export function isSetoranTunai(...values: Array<string | null | undefined>): boolean {
+  return values.some((value) => {
+    if (!value) return false
+    const normalized = value.toLowerCase().replace(/[_\s]+/g, ' ').trim()
+    return normalized === 'setoran tunai' || normalized === 'setoran'
+  })
+}
+
 export function normalizeBranchName(name: string): string {
   return name
     .toLowerCase()

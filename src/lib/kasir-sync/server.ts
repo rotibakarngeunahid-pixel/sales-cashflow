@@ -5,6 +5,7 @@ import type { Database } from '@/types/database'
 import {
   normalizeBranchName,
   normalizePaymentMethod,
+  isSetoranTunai,
   validateMappingTargets,
   type KasirExpenseMappingConfig,
 } from '@/lib/kasir-import/shared'
@@ -569,6 +570,11 @@ export async function pullKasirToQueue(
 
       const { tanggal, waktu } = normalizeDate(raw)
       if (!tanggal) { skippedCount++; continue }
+
+      // Exclude setoran tunai: internal cash transfer, not an operational expense
+      const kategoriRaw = str(raw, 'kategori', 'category', 'category_name', 'nama_kategori', 'jenis')
+      const namaPengeluaran = str(raw, 'name', 'nama', 'expense_name', 'nama_pengeluaran', 'uraian')
+      if (isSetoranTunai(kategoriRaw, namaPengeluaran)) { skippedCount++; continue }
 
       const cabang = str(raw, 'cabang', 'branch_name', 'outlet')
       const matchedBranch = cabang ? matchBranch(cabang, branches) : null
