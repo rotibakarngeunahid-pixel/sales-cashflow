@@ -28,6 +28,7 @@ const pageTitles: Record<string, string> = {
   '/users': 'User Management',
   '/audit-log': 'Audit Log',
   '/data-management': 'Manajemen Data',
+  '/reset-cabang': 'Reset Data Cabang',
   '/settings': 'Settings',
 }
 
@@ -48,6 +49,7 @@ const prefetchPaths = [
   '/users',
   '/audit-log',
   '/data-management',
+  '/reset-cabang',
   '/settings',
 ]
 

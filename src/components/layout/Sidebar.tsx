@@ -20,6 +20,7 @@ import {
   Store,
   Package,
   ArrowLeftRight,
+  RotateCcw,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -62,6 +63,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/users', label: 'User Management', icon: Users, ownerOnly: true },
       { href: '/audit-log', label: 'Audit Log', icon: ClipboardList, ownerOnly: true },
       { href: '/data-management', label: 'Manajemen Data', icon: Eraser, ownerOnly: true },
+      { href: '/reset-cabang', label: 'Reset Data Cabang', icon: RotateCcw, ownerOnly: true },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],
   },
