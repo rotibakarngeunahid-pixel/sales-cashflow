@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { Profile } from '@/types/database'
+import type { Profile, CashflowAutoSplitEntrySource } from '@/types/database'
 import { getOrFetchCached, invalidateCachedData } from '@/lib/utils/client-cache'
 import {
   AlertTriangle,
@@ -76,14 +76,15 @@ const MODULE_DEFS: {
     label: 'Cashflow Manual',
     description: 'Transaksi cashflow kas masuk/keluar yang diinput atau diimport secara manual',
     icon: Wallet,
-    tables: 'cashflow_transactions (source=manual)',
+    tables: 'cashflow_transactions (source=manual, auto_split_kurir dari input manual)',
   },
   {
     key: 'kasir',
     label: 'Import & Sinkronisasi Kasir (POS)',
     description: 'Log import dari POS, antrian sinkronisasi kasir, dan cashflow bahan baku terkait',
     icon: History,
-    tables: 'kasir_import_logs, kasir_sync_queue, cashflow_transactions (source=kasir_*,purchase_order)',
+    tables:
+      'kasir_import_logs, kasir_sync_queue, cashflow_transactions (source=kasir_*,purchase_order, auto_split_kurir dari kasir)',
   },
   {
     key: 'transfer_beban',
@@ -93,6 +94,37 @@ const MODULE_DEFS: {
     tables: 'beban_transfers, cashflow_transactions (source=beban_transfer)',
   },
 ]
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// cashflow_auto_split_groups (Kurir bawa Bahan) fans out to ALL active branches, so it
+// can't be filtered by branch_id directly — resolve group ids by entry_source first,
+// then scope the cashflow_transactions delete/count to this branch + those group ids only.
+async function getAutoSplitGroupIds(
+  supabase: ReturnType<typeof createClient>,
+  entrySources: CashflowAutoSplitEntrySource[]
+): Promise<string[]> {
+  const { data } = await supabase
+    .from('cashflow_auto_split_groups')
+    .select('id')
+    .in('entry_source', entrySources)
+  return (data ?? []).map((g) => g.id)
+}
+
+async function countAutoSplitKurir(
+  supabase: ReturnType<typeof createClient>,
+  branchId: string,
+  groupIds: string[]
+): Promise<number> {
+  if (groupIds.length === 0) return 0
+  const { count } = await supabase
+    .from('cashflow_transactions')
+    .select('*', { count: 'exact', head: true })
+    .eq('branch_id', branchId)
+    .eq('source', 'auto_split_kurir')
+    .in('auto_split_group_id', groupIds)
+  return count ?? 0
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -218,6 +250,11 @@ export default function ResetCabangPage() {
 
     const supabase = createClient()
 
+    const [manualSplitGroupIds, kasirSplitGroupIds] = await Promise.all([
+      getAutoSplitGroupIds(supabase, ['manual_cashflow']),
+      getAutoSplitGroupIds(supabase, ['kasir_import', 'kasir_sync']),
+    ])
+
     const [
       { count: salesCount },
       { count: cfSalesCount },
@@ -279,11 +316,16 @@ export default function ResetCabangPage() {
         .or(`from_branch_id.eq.${selectedBranchId},to_branch_id.eq.${selectedBranchId}`),
     ])
 
+    const [autoSplitManualCount, autoSplitKasirCount] = await Promise.all([
+      countAutoSplitKurir(supabase, selectedBranchId, manualSplitGroupIds),
+      countAutoSplitKurir(supabase, selectedBranchId, kasirSplitGroupIds),
+    ])
+
     setPreviewData({
       salesReports: salesCount ?? 0,
       cashflowSales: cfSalesCount ?? 0,
-      cashflowManual: cfManualCount ?? 0,
-      cashflowKasir: cfKasirCount ?? 0,
+      cashflowManual: (cfManualCount ?? 0) + autoSplitManualCount,
+      cashflowKasir: (cfKasirCount ?? 0) + autoSplitKasirCount,
       cashflowBeban: cfBebanCount ?? 0,
       kasirImportLogs: kasirImportCount ?? 0,
       kasirSyncQueue: kasirSyncCount ?? 0,
@@ -375,6 +417,26 @@ export default function ResetCabangPage() {
       } else {
         result.cashflowTransactions += (deletedManual ?? []).length
       }
+
+      // Auto-split Kurir bawa Bahan yang asalnya dari input cashflow manual
+      const manualSplitGroupIds = await getAutoSplitGroupIds(supabase, ['manual_cashflow'])
+      if (manualSplitGroupIds.length > 0) {
+        const { data: deletedAutoSplitManual, error: autoSplitManualErr } = await supabase
+          .from('cashflow_transactions')
+          .delete()
+          .eq('branch_id', selectedBranchId)
+          .eq('source', 'auto_split_kurir')
+          .in('auto_split_group_id', manualSplitGroupIds)
+          .select('id')
+
+        if (autoSplitManualErr) {
+          result.errors.push(
+            `Gagal hapus cashflow auto split kurir (manual): ${autoSplitManualErr.message}`
+          )
+        } else {
+          result.cashflowTransactions += (deletedAutoSplitManual ?? []).length
+        }
+      }
     }
 
     // ── MODULE: KASIR ──────────────────────────────────────────────────────
@@ -391,6 +453,29 @@ export default function ResetCabangPage() {
         result.errors.push(`Gagal hapus cashflow kasir: ${kasirCfErr.message}`)
       } else {
         result.cashflowTransactions += (deletedKasirCf ?? []).length
+      }
+
+      // a2. Auto-split Kurir bawa Bahan yang asalnya dari import/sync kasir
+      const kasirSplitGroupIds = await getAutoSplitGroupIds(supabase, [
+        'kasir_import',
+        'kasir_sync',
+      ])
+      if (kasirSplitGroupIds.length > 0) {
+        const { data: deletedAutoSplitKasir, error: autoSplitKasirErr } = await supabase
+          .from('cashflow_transactions')
+          .delete()
+          .eq('branch_id', selectedBranchId)
+          .eq('source', 'auto_split_kurir')
+          .in('auto_split_group_id', kasirSplitGroupIds)
+          .select('id')
+
+        if (autoSplitKasirErr) {
+          result.errors.push(
+            `Gagal hapus cashflow auto split kurir (kasir): ${autoSplitKasirErr.message}`
+          )
+        } else {
+          result.cashflowTransactions += (deletedAutoSplitKasir ?? []).length
+        }
       }
 
       // b. Delete kasir_import_logs
