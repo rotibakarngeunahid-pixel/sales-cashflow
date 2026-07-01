@@ -303,11 +303,13 @@ export default function ResetCabangPage() {
         .select('*', { count: 'exact', head: true })
         .eq('branch_id', selectedBranchId),
 
-      // Kasir sync queue (semua status)
+      // Kasir sync queue (hanya pending/confirmed - yang benar-benar akan dinonaktifkan;
+      // baris rejected disimpan permanen untuk audit trail dan tidak pernah dihapus)
       supabase
         .from('kasir_sync_queue')
         .select('*', { count: 'exact', head: true })
-        .eq('branch_id', selectedBranchId),
+        .eq('branch_id', selectedBranchId)
+        .in('status', ['pending', 'confirmed']),
 
       // Beban transfers (as sender OR receiver)
       supabase
