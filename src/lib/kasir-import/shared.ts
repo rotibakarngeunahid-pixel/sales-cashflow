@@ -1,7 +1,19 @@
 // =============================================
-// Kasir Import — Shared Types & Constants
+// Kasir Import - Shared Types & Constants
 // Digunakan oleh client (UI) dan server (API)
 // =============================================
+
+import {
+  KURIR_BAWA_BAHAN_CATEGORY_NAME,
+  isKurirBawaBahanCategory,
+  normalizeStrictCategoryName,
+} from '@/lib/cashflow/auto-split-kurir'
+
+export {
+  KURIR_BAWA_BAHAN_CATEGORY_NAME,
+  isKurirBawaBahanCategory,
+  normalizeStrictCategoryName,
+}
 
 // ----- Source & label -----
 

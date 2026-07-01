@@ -1,7 +1,7 @@
 import 'server-only'
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
+import type { Database, Json } from '@/types/database'
 const uuidv4 = () => crypto.randomUUID()
 import {
   KASIR_SALES_SOURCE,
@@ -10,7 +10,7 @@ import {
   normalizePaymentMethod,
   normalizeBranchName,
   isSetoranTunai,
-  isKurirExpense,
+  isKurirBawaBahanCategory,
   makeSaleImportKey,
   makeExpenseImportKey,
   distributeSplitAmounts,
@@ -361,6 +361,15 @@ function matchCategory(kasirCategoryName: string, categories: LocalCategory[], t
            normalizeBranchName(c.name).includes(normalized)
   )
   return partial?.id ?? null
+}
+
+function findKurirBawaBahanCategoryId(categories: LocalCategory[]): string | null {
+  const found = categories.find(
+    (category) =>
+      (category.default_type === 'cash_out' || category.default_type === 'both') &&
+      isKurirBawaBahanCategory(category.name)
+  )
+  return found?.id ?? null
 }
 
 async function getSalesCategoryId(supabase: Supabase, paymentCategory: 'Tunai' | 'QRIS'): Promise<string | null> {
@@ -733,16 +742,18 @@ export async function getExpensesPreview(
   const items: KasirExpensePreviewItem[] = branchFiltered.map((item) => {
     const importKey       = makeExpenseImportKey(item.branchName, item.expenseId)
     const matchedBranch   = matchBranch(item.branchName, branches, mappings)
-    const localCategoryId = matchCategory(item.category || item.expenseName, categories, 'cash_out')
+    const isAutoSplitKurirBawaBahan = isKurirBawaBahanCategory(item.category)
+    const localCategoryId = isAutoSplitKurirBawaBahan
+      ? findKurirBawaBahanCategoryId(categories)
+      : matchCategory(item.category || item.expenseName, categories, 'cash_out')
     const isDuplicate     = existingKeys.has(importKey) || splitImportedIds.has(item.expenseId)
 
-    // Auto-split kurir: biaya pengiriman dibagi rata ke semua cabang aktif
-    const isKurir = isKurirExpense(item.category, item.expenseName)
-
     let status: KasirExpensePreviewItem['status']
-    if (isKurir) {
-      // Kurir selalu bisa diimport (split ke semua cabang), tidak bergantung pada matchedBranch
-      status = isDuplicate ? 'duplicate' : 'new'
+    if (isAutoSplitKurirBawaBahan) {
+      // Kurir bawa Bahan selalu split ke semua cabang aktif, tidak bergantung cabang asal.
+      status = branches.length === 0 || !localCategoryId
+        ? 'branch_not_found'
+        : isDuplicate ? 'duplicate' : 'new'
     } else if (!matchedBranch) {
       status = 'branch_not_found'
     } else if (isDuplicate) {
@@ -753,7 +764,7 @@ export async function getExpensesPreview(
 
     let defaultMapping: KasirExpenseMappingConfig
 
-    if (isKurir && branches.length > 0) {
+    if (isAutoSplitKurirBawaBahan && branches.length > 0) {
       const splitAmounts = distributeSplitAmounts(item.amount, branches.length)
       const kurirTargets: MappingTarget[] = branches.map((branch, idx) => ({
         branchId:   branch.id,
@@ -858,6 +869,54 @@ export async function importExpenses(
     if (targets.length === 0) {
       totalFailed++
       errors.push(`Cabang tidak ditemukan untuk kas keluar: ${item.expenseName}`)
+      continue
+    }
+
+    const shouldCreateAutoSplitGroup = isKurirBawaBahanCategory(item.category)
+
+    if (shouldCreateAutoSplitGroup) {
+      if (!item.localCategoryId) {
+        totalFailed++
+        errors.push('Kategori Kurir bawa Bahan belum tersedia atau belum aktif di cashflow.')
+        continue
+      }
+
+      const baseImportKey = makeExpenseImportKey(item.branchName, item.expenseId)
+      const { error } = await supabase.rpc('create_auto_split_kurir_bawa_bahan', {
+        p_transaction_date: item.dateWITA,
+        p_original_branch_id: item.branchId,
+        p_category_id: item.localCategoryId,
+        p_description: `${item.expenseName} - ${item.branchName} - ${item.dateWITA}`,
+        p_total_amount: item.amount,
+        p_entry_source: 'kasir_import',
+        p_source_ref: baseImportKey,
+        p_idempotency_key: `kasir-import:${baseImportKey}`,
+        p_source_metadata: {
+          expense_id: item.expenseId,
+          original_branch: item.branchName,
+          original_amount: item.amount,
+          expense_name: item.expenseName,
+          category: item.category,
+          notes: item.notes,
+          recorded_by: item.recordedBy,
+          time_wita: item.timeWITA,
+          datetime_raw: item.datetimeRaw,
+          mapping_mode: mapping.mode,
+          is_split: true,
+          split_count: targets.length,
+          import_date: new Date().toISOString(),
+        } as Json,
+        p_child_import_key_prefix: baseImportKey,
+      })
+
+      if (error) {
+        totalFailed++
+        errors.push(`Gagal auto split ${item.expenseName}: ${error.message}`)
+        continue
+      }
+
+      totalSuccess++
+      totalAmount += item.amount
       continue
     }
 

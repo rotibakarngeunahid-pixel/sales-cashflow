@@ -13,6 +13,7 @@ import type {
   KasirExpenseMappingConfig,
   MappingTarget,
 } from '@/lib/kasir-import/shared'
+import { isKurirBawaBahanCategory } from '@/lib/cashflow/auto-split-kurir'
 
 // =============================================
 // Types
@@ -287,13 +288,14 @@ export default function KasirSyncReviewPage() {
     }
 
     // Kas keluar by branch → grouped kategori
-    const expMap = new Map<string, Array<{ id: string; kategori: string; nominal: number; isKurir: boolean }>>()
+    const expMap = new Map<string, Array<{ id: string; kategori: string; nominal: number; isKurir: boolean; isAutoSplitKurir: boolean }>>()
     for (const item of pendingExp) {
       const key = item.cabang || 'Tidak Diketahui'
       const list = expMap.get(key) ?? []
       const kategori = item.kategori || 'Lainnya'
       const isKurir = kategori.toLowerCase().includes('kurir')
-      list.push({ id: item.id, kategori, nominal: item.nominal ?? 0, isKurir })
+      const isAutoSplitKurir = isKurirBawaBahanCategory(kategori)
+      list.push({ id: item.id, kategori, nominal: item.nominal ?? 0, isKurir, isAutoSplitKurir })
       expMap.set(key, list)
     }
 
@@ -328,17 +330,17 @@ export default function KasirSyncReviewPage() {
     items.find((i) => i.id === id && i.status === 'pending')
   )
   const confirmableSelected = selectedPending.filter((id) =>
-    items.find((i) => i.id === id && i.branch_id !== null)
+    items.find((i) => i.id === id && (i.branch_id !== null || isKurirBawaBahanCategory(i.kategori)))
   )
   const unresolvableSelected = selectedPending.filter((id) =>
-    items.find((i) => i.id === id && i.branch_id === null)
+    items.find((i) => i.id === id && i.branch_id === null && !isKurirBawaBahanCategory(i.kategori))
   )
 
   // Kas keluar pending yang perlu mapping kurir (belum di-mapping)
   const unmappedKurirCount = pendingItems.filter((i) => {
     if (i.item_type !== 'kas_keluar') return false
     const kat = (i.kategori ?? '').toLowerCase()
-    return kat.includes('kurir') && !mappings[i.id]
+    return kat.includes('kurir') && !isKurirBawaBahanCategory(i.kategori) && !mappings[i.id]
   }).length
 
   const hasPendingSummary =
@@ -492,14 +494,21 @@ export default function KasirSyncReviewPage() {
                               <div className="flex flex-col gap-0.5">
                                 <span className={cn(
                                   'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-semibold w-fit',
-                                  exp.isKurir
+                                  exp.isAutoSplitKurir
+                                    ? 'bg-sky-100 text-sky-700'
+                                    : exp.isKurir
                                     ? 'bg-orange-100 text-orange-700'
                                     : 'bg-slate-100 text-slate-600'
                                 )}>
-                                  {exp.isKurir && <GitMerge className="w-2.5 h-2.5" />}
+                                  {(exp.isKurir || exp.isAutoSplitKurir) && <GitMerge className="w-2.5 h-2.5" />}
                                   {exp.kategori}
                                 </span>
-                                {exp.isKurir && (
+                                {exp.isAutoSplitKurir ? (
+                                  <span className="text-xs text-sky-700 font-semibold flex items-center gap-0.5 w-fit">
+                                    <CheckCircle2 className="w-2.5 h-2.5" />
+                                    Auto split semua outlet
+                                  </span>
+                                ) : exp.isKurir && (
                                   mappings[exp.id] ? (
                                     <button
                                       onClick={() => {
@@ -1059,11 +1068,12 @@ function QueueRow({
 }) {
   const isPenjualan = item.item_type === 'penjualan'
   const amount = isPenjualan ? (item.total_penjualan ?? 0) : (item.nominal ?? 0)
-  const noBranch = !item.branch_id && !mapping
   const isKasKeluar = item.item_type === 'kas_keluar'
   const isKurir = isKasKeluar && (item.kategori ?? '').toLowerCase().includes('kurir')
+  const isAutoSplitKurir = isKasKeluar && isKurirBawaBahanCategory(item.kategori)
+  const noBranch = !item.branch_id && !mapping && !isAutoSplitKurir
   // Kurir perlu mapping — tampilkan peringatan jika belum di-mapping
-  const needsMapping = isKurir && !mapping && item.status === 'pending'
+  const needsMapping = isKurir && !isAutoSplitKurir && !mapping && item.status === 'pending'
 
   return (
     <tr
@@ -1139,9 +1149,12 @@ function QueueRow({
             <div className="flex items-center gap-1.5">
               <p className="text-slate-700 font-medium">{item.kategori || '—'}</p>
               {isKurir && (
-                <span className="text-xs bg-orange-100 text-orange-700 font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                <span className={cn(
+                  'text-xs font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5',
+                  isAutoSplitKurir ? 'bg-sky-100 text-sky-700' : 'bg-orange-100 text-orange-700'
+                )}>
                   <GitMerge className="w-2.5 h-2.5" />
-                  Kurir
+                  {isAutoSplitKurir ? 'Auto Split' : 'Kurir'}
                 </span>
               )}
             </div>
@@ -1156,7 +1169,12 @@ function QueueRow({
             {/* Mapping badge */}
             {isKasKeluar && item.status === 'pending' && (
               <div className="mt-1">
-                {mapping ? (
+                {isAutoSplitKurir ? (
+                  <span className="text-xs bg-sky-100 text-sky-700 font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1 w-fit">
+                    <CheckCircle2 className="w-2.5 h-2.5" />
+                    Auto split semua outlet
+                  </span>
+                ) : mapping ? (
                   <div className="flex items-center gap-1">
                     <span className="text-xs bg-emerald-100 text-emerald-700 font-semibold px-1.5 py-0.5 rounded-full flex items-center gap-1">
                       <CheckCircle2 className="w-2.5 h-2.5" />

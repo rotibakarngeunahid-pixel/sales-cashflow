@@ -1,10 +1,13 @@
 export type UserRole = 'owner' | 'admin'
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 export type KasirSyncBatchStatus = 'running' | 'completed' | 'failed' | 'partial'
 export type KasirSyncItemStatus = 'pending' | 'confirmed' | 'rejected'
 export type KasirSyncItemType = 'penjualan' | 'kas_keluar'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer' | 'auto_split_kurir'
+export type CashflowAutoSplitGroupStatus = 'active' | 'void'
+export type CashflowAutoSplitEntrySource = 'manual_cashflow' | 'kasir_import' | 'kasir_sync'
 
 export type KasirImportType = 'sales' | 'expenses'
 export type KasirImportStatus = 'success' | 'failed' | 'partial'
@@ -101,11 +104,40 @@ export interface CashflowTransaction {
   source_label: string | null
   source_metadata: Record<string, unknown>
   reference_group_id: string | null
+  auto_split_group_id: string | null
   status: CashflowStatus
   created_by: string | null
   updated_by: string | null
   created_at: string
   updated_at: string
+}
+
+export interface CashflowAutoSplitGroup {
+  id: string
+  transaction_date: string
+  original_branch_id: string | null
+  original_branch?: Pick<Branch, 'id' | 'name'> | null
+  category_id: string
+  category?: Pick<CashflowCategory, 'id' | 'name'> | null
+  description: string | null
+  total_amount: number
+  branch_count: number
+  split_rule: 'equal_active_branches'
+  rounding_rule: 'floor_remainder_by_branch_order'
+  status: CashflowAutoSplitGroupStatus
+  entry_source: CashflowAutoSplitEntrySource
+  source_ref: string | null
+  idempotency_key: string | null
+  branch_snapshot: Json
+  allocation_snapshot: Json
+  source_metadata: Json
+  created_by: string | null
+  updated_by: string | null
+  created_at: string
+  updated_at: string
+  voided_at: string | null
+  voided_by: string | null
+  void_reason: string | null
 }
 
 export interface KasirImportLog {
@@ -448,6 +480,7 @@ export interface Database {
           source_label: string | null
           source_metadata: Record<string, unknown>
           reference_group_id: string | null
+          auto_split_group_id: string | null
           status: CashflowStatus
           created_by: string | null
           updated_by: string | null
@@ -469,6 +502,7 @@ export interface Database {
           source_label?: string | null
           source_metadata?: Record<string, unknown>
           reference_group_id?: string | null
+          auto_split_group_id?: string | null
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -488,6 +522,7 @@ export interface Database {
           source_label?: string | null
           source_metadata?: Record<string, unknown>
           reference_group_id?: string | null
+          auto_split_group_id?: string | null
           status?: CashflowStatus
           created_by?: string | null
           updated_by?: string | null
@@ -517,6 +552,121 @@ export interface Database {
           {
             foreignKeyName: 'cashflow_transactions_updated_by_fkey'
             columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_transactions_auto_split_group_id_fkey'
+            columns: ['auto_split_group_id']
+            isOneToOne: false
+            referencedRelation: 'cashflow_auto_split_groups'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      cashflow_auto_split_groups: {
+        Row: {
+          id: string
+          transaction_date: string
+          original_branch_id: string | null
+          category_id: string
+          description: string | null
+          total_amount: number
+          branch_count: number
+          split_rule: 'equal_active_branches'
+          rounding_rule: 'floor_remainder_by_branch_order'
+          status: CashflowAutoSplitGroupStatus
+          entry_source: CashflowAutoSplitEntrySource
+          source_ref: string | null
+          idempotency_key: string | null
+          branch_snapshot: Json
+          allocation_snapshot: Json
+          source_metadata: Json
+          created_by: string | null
+          updated_by: string | null
+          created_at: string
+          updated_at: string
+          voided_at: string | null
+          voided_by: string | null
+          void_reason: string | null
+        }
+        Insert: {
+          transaction_date: string
+          category_id: string
+          total_amount: number
+          branch_count: number
+          original_branch_id?: string | null
+          description?: string | null
+          split_rule?: 'equal_active_branches'
+          rounding_rule?: 'floor_remainder_by_branch_order'
+          status?: CashflowAutoSplitGroupStatus
+          entry_source?: CashflowAutoSplitEntrySource
+          source_ref?: string | null
+          idempotency_key?: string | null
+          branch_snapshot?: Json
+          allocation_snapshot?: Json
+          source_metadata?: Json
+          created_by?: string | null
+          updated_by?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+          void_reason?: string | null
+        }
+        Update: {
+          transaction_date?: string
+          original_branch_id?: string | null
+          category_id?: string
+          description?: string | null
+          total_amount?: number
+          branch_count?: number
+          split_rule?: 'equal_active_branches'
+          rounding_rule?: 'floor_remainder_by_branch_order'
+          status?: CashflowAutoSplitGroupStatus
+          entry_source?: CashflowAutoSplitEntrySource
+          source_ref?: string | null
+          idempotency_key?: string | null
+          branch_snapshot?: Json
+          allocation_snapshot?: Json
+          source_metadata?: Json
+          created_by?: string | null
+          updated_by?: string | null
+          voided_at?: string | null
+          voided_by?: string | null
+          void_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'cashflow_auto_split_groups_original_branch_id_fkey'
+            columns: ['original_branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_auto_split_groups_category_id_fkey'
+            columns: ['category_id']
+            isOneToOne: false
+            referencedRelation: 'cashflow_categories'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_auto_split_groups_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_auto_split_groups_updated_by_fkey'
+            columns: ['updated_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedColumns: ['id']
+          },
+          {
+            foreignKeyName: 'cashflow_auto_split_groups_voided_by_fkey'
+            columns: ['voided_by']
             isOneToOne: false
             referencedRelation: 'profiles'
             referencedColumns: ['id']
@@ -848,6 +998,35 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
+      create_auto_split_kurir_bawa_bahan: {
+        Args: {
+          p_transaction_date: string
+          p_original_branch_id: string | null
+          p_category_id: string
+          p_description: string | null
+          p_total_amount: number
+          p_entry_source?: CashflowAutoSplitEntrySource
+          p_source_ref?: string | null
+          p_idempotency_key?: string | null
+          p_source_metadata?: Json
+          p_child_import_key_prefix?: string | null
+        }
+        Returns: Json
+      }
+      void_auto_split_kurir_bawa_bahan: {
+        Args: {
+          p_group_id: string
+          p_reason?: string | null
+        }
+        Returns: Json
+      }
+      cashflow_auto_split_group_response: {
+        Args: {
+          p_group_id: string
+          p_idempotent?: boolean
+        }
+        Returns: Json
+      }
       get_email_by_username: {
         Args: { p_username: string }
         Returns: string | null

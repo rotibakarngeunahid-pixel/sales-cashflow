@@ -1,8 +1,10 @@
 import 'server-only'
 // v1.1.0 — tambah: support mapping/split kas_keluar saat konfirmasi
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/database'
+import type { Database, Json } from '@/types/database'
 import {
+  distributeSplitAmounts,
+  isKurirBawaBahanCategory,
   normalizeBranchName,
   normalizePaymentMethod,
   isSetoranTunai,
@@ -387,6 +389,15 @@ function matchCategoryByKasirName(
       n.includes(normalizeBranchName(c.name))
   )
   return partial?.id ?? null
+}
+
+function findKurirBawaBahanCategoryId(categories: LocalCategory[]): string | null {
+  const found = categories.find(
+    (category) =>
+      (category.default_type === 'cash_out' || category.default_type === 'both') &&
+      isKurirBawaBahanCategory(category.name)
+  )
+  return found?.id ?? null
 }
 
 // =============================================
@@ -849,6 +860,7 @@ async function confirmKasKeluar(
 ): Promise<void> {
   const amount = item.nominal ?? 0
   if (amount <= 0) throw new Error('Nominal kas keluar tidak valid.')
+  const isAutoSplitKurirBawaBahan = isKurirBawaBahanCategory(item.kategori)
 
   // ── Tentukan target cabang berdasarkan mapping ──────────────────────
   let targets: Array<{ branchId: string; branchName: string; amount: number }>
@@ -857,6 +869,17 @@ async function confirmKasKeluar(
     const validationError = validateMappingTargets(mapping.targets, amount)
     if (validationError) throw new Error(validationError)
     targets = mapping.targets
+  } else if (isAutoSplitKurirBawaBahan) {
+    const branches = await loadBranches(supabase)
+    if (branches.length === 0) {
+      throw new Error('Tidak ada outlet aktif. Aktifkan minimal 1 outlet sebelum menyimpan Kurir bawa Bahan.')
+    }
+    const splitAmounts = distributeSplitAmounts(amount, branches.length)
+    targets = branches.map((branch, index) => ({
+      branchId: branch.id,
+      branchName: branch.name,
+      amount: splitAmounts[index],
+    }))
   } else {
     // Fallback: gunakan cabang yang sudah di-match
     if (!item.branch_id) throw new Error('Cabang tidak cocok — tidak bisa dikonfirmasi.')
@@ -866,6 +889,25 @@ async function confirmKasKeluar(
 
   const isSplit = targets.length > 1
   const baseImportKey = makeSyncExpenseKey(item.cabang, item.kasir_id)
+
+  const { data: existingBase } = await supabase
+    .from('cashflow_transactions')
+    .select('id')
+    .eq('import_key', baseImportKey)
+    .maybeSingle()
+
+  if (existingBase) {
+    await supabase
+      .from('kasir_sync_queue')
+      .update({
+        status: 'confirmed',
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: userId,
+        cashflow_transaction_id: existingBase.id,
+      })
+      .eq('id', item.id)
+    return
+  }
 
   // Cek apakah expense ini sudah pernah diimport sebagai SPLIT (mis. lewat
   // import manual). Kalau ya, cukup tandai item antrian sebagai confirmed
@@ -892,10 +934,67 @@ async function confirmKasKeluar(
     }
   }
 
-  const categoryId = item.kategori
-    ? matchCategoryByKasirName(categories, item.kategori) ??
-      findCategory(categories, 'cash_out', ['Lainnya'])
-    : findCategory(categories, 'cash_out', ['Lainnya'])
+  const categoryId = isAutoSplitKurirBawaBahan
+    ? findKurirBawaBahanCategoryId(categories)
+    : item.kategori
+      ? matchCategoryByKasirName(categories, item.kategori) ??
+        findCategory(categories, 'cash_out', ['Lainnya'])
+      : findCategory(categories, 'cash_out', ['Lainnya'])
+
+  if (isAutoSplitKurirBawaBahan) {
+    if (!categoryId) {
+      throw new Error('Kategori Kurir bawa Bahan belum tersedia atau belum aktif di cashflow.')
+    }
+
+    const { data: groupData, error } = await supabase.rpc('create_auto_split_kurir_bawa_bahan', {
+      p_transaction_date: item.tanggal,
+      p_original_branch_id: item.branch_id,
+      p_category_id: categoryId,
+      p_description: [
+        item.kategori || 'Kurir bawa Bahan',
+        item.cabang,
+        item.tanggal,
+        item.keterangan ? `- ${item.keterangan}` : '',
+      ].filter(Boolean).join(' - '),
+      p_total_amount: amount,
+      p_entry_source: 'kasir_sync',
+      p_source_ref: baseImportKey,
+      p_idempotency_key: `kasir-sync:${baseImportKey}`,
+      p_source_metadata: {
+        ...((item.raw_data as AnyRecord) ?? {}),
+        kasir_id: item.kasir_id,
+        sync_queue_id: item.id,
+        confirmed_by: userId,
+        confirmed_at: new Date().toISOString(),
+        is_split: true,
+        split_count: targets.length,
+        original_branch: item.cabang,
+        original_amount: amount,
+        mapping_mode: mapping?.mode ?? 'split_equal',
+      } as Json,
+      p_child_import_key_prefix: baseImportKey,
+    })
+
+    if (error) throw new Error(error.message)
+
+    const transactionIds = typeof groupData === 'object' && groupData !== null && !Array.isArray(groupData)
+      ? (groupData as AnyRecord).transaction_ids
+      : null
+    const firstTransactionId = Array.isArray(transactionIds) && typeof transactionIds[0] === 'string'
+      ? transactionIds[0]
+      : null
+
+    await supabase
+      .from('kasir_sync_queue')
+      .update({
+        status: 'confirmed',
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: userId,
+        cashflow_transaction_id: firstTransactionId,
+      })
+      .eq('id', item.id)
+    return
+  }
 
   let lastInsertedId: string | null = null
 

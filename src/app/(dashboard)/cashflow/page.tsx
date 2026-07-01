@@ -1,12 +1,17 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X, Upload, Scissors } from 'lucide-react'
+import { Plus, Pencil, XCircle, FileSpreadsheet, RefreshCw, Info, Trash2, CheckCircle2, X, Upload, Scissors, AlertCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { CashflowTransaction, CashflowType, Branch, CashflowCategory, Profile } from '@/types/database'
 import { formatDate, formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import { cashflowSchema, type CashflowFormData } from '@/lib/validations/cashflow'
+import {
+  distributeAutoSplitAmount,
+  getAutoSplitPreviewError,
+  isKurirBawaBahanCategory,
+} from '@/lib/cashflow/auto-split-kurir'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import Modal, { ConfirmModal } from '@/components/ui/Modal'
@@ -85,8 +90,15 @@ function isActiveCourierExpense(tx: CashflowTransaction) {
   return tx.status === 'active' && isCourierExpense(tx)
 }
 
+function isAutoSplitKurirChild(tx: CashflowTransaction) {
+  return tx.source === 'auto_split_kurir' || Boolean(tx.auto_split_group_id)
+}
+
 function canManageCashflowTx(tx: CashflowTransaction) {
-  return tx.status === 'active' && tx.source !== 'sales' && tx.source !== 'purchase_order'
+  return tx.status === 'active'
+    && tx.source !== 'sales'
+    && tx.source !== 'purchase_order'
+    && !isAutoSplitKurirChild(tx)
 }
 
 function canSplitCashflowTx(tx: CashflowTransaction) {
@@ -96,10 +108,18 @@ function canSplitCashflowTx(tx: CashflowTransaction) {
 // Transaksi hasil pembagian beban kurir selalu punya reference_group_id
 // dengan source manual.
 function isSplitTx(tx: CashflowTransaction) {
-  return tx.source === 'manual' && Boolean(tx.reference_group_id)
+  return (tx.source === 'manual' && Boolean(tx.reference_group_id)) || isAutoSplitKurirChild(tx)
 }
 
 function SplitStatusBadge({ tx }: { tx: CashflowTransaction }) {
+  if (isAutoSplitKurirChild(tx)) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full">
+        <Scissors className="w-3 h-3" /> Auto split
+      </span>
+    )
+  }
+
   if (!isActiveCourierExpense(tx)) return null
 
   if (isSplitTx(tx)) {
@@ -118,6 +138,14 @@ function SplitStatusBadge({ tx }: { tx: CashflowTransaction }) {
 }
 
 function CashflowSourceLabel({ tx }: { tx: CashflowTransaction }) {
+  if (tx.source === 'auto_split_kurir') {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full">
+        <Info className="w-3 h-3" /> Auto Split Kurir
+      </span>
+    )
+  }
+
   if (tx.source === 'sales') {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
@@ -217,9 +245,11 @@ export default function CashflowPage() {
   const [splitSourceTx, setSplitSourceTx] = useState<CashflowTransaction | null>(null)
   const [editTx, setEditTx] = useState<CashflowTransaction | null>(null)
   const [voidTarget, setVoidTarget] = useState<CashflowTransaction | null>(null)
+  const [voidAutoSplitTarget, setVoidAutoSplitTarget] = useState<CashflowTransaction | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<CashflowTransaction | null>(null)
   const [deleteReason, setDeleteReason] = useState('')
   const [saving, setSaving] = useState(false)
+  const [formIdempotencyKey, setFormIdempotencyKey] = useState('')
   const canDeleteCashflow = useCallback((tx: CashflowTransaction) => (
     isOwner && tx.source === 'manual' && tx.status === 'void'
   ), [isOwner])
@@ -229,6 +259,8 @@ export default function CashflowPage() {
   })
 
   const watchedType = watch('transaction_type')
+  const watchedCategoryId = watch('category_id')
+  const watchedAmount = watch('amount')
 
   const load = useCallback(async (options: { force?: boolean } = {}) => {
     const supabase = createClient()
@@ -395,6 +427,7 @@ export default function CashflowPage() {
 
   function openAdd() {
     setEditTx(null)
+    setFormIdempotencyKey(crypto.randomUUID())
     reset({
       transaction_date: toDateInputValue(),
       branch_id: '',
@@ -418,6 +451,7 @@ export default function CashflowPage() {
 
   function openEdit(tx: CashflowTransaction) {
     setEditTx(tx)
+    setFormIdempotencyKey(crypto.randomUUID())
     reset({
       transaction_date: tx.transaction_date,
       branch_id: tx.branch_id,
@@ -431,68 +465,50 @@ export default function CashflowPage() {
 
   async function onSubmit(data: CashflowFormData) {
     setSaving(true)
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
 
-    const isCashIn = data.transaction_type === 'cash_in'
     const payload = {
       transaction_date: data.transaction_date,
       branch_id: data.branch_id,
       transaction_type: data.transaction_type,
       category_id: data.category_id,
       description: data.description || '',
-      cash_in: isCashIn ? data.amount : 0,
-      cash_out: isCashIn ? 0 : data.amount,
       amount: data.amount,
-      // Saat edit: pertahankan source aslinya. Saat tambah baru: set 'manual'.
-      ...(editTx ? {} : { source: 'manual' as const }),
-      updated_by: user?.id ?? null,
+      idempotency_key: formIdempotencyKey || crypto.randomUUID(),
     }
 
-    if (editTx) {
-      const { error: updateError } = await supabase.from('cashflow_transactions').update(payload).eq('id', editTx.id)
-      if (updateError) {
-        toastTimerRef(`Gagal menyimpan transaksi: ${updateError.message}`, 'error')
-        setSaving(false)
-        return
-      }
-      await supabase.from('audit_logs').insert({
-        table_name: 'cashflow_transactions',
-        record_id: editTx.id,
-        action: 'cashflow_updated',
-        old_data: editTx as unknown as Record<string, unknown>,
-        new_data: payload as unknown as Record<string, unknown>,
-        changed_by: user?.id ?? null,
-        changed_at: new Date().toISOString(),
+    const endpoint = editTx
+      ? `/api/cashflow/transactions/${editTx.id}`
+      : '/api/cashflow/transactions'
+    const method = editTx ? 'PATCH' : 'POST'
+
+    let result: { success?: boolean; message?: string; mode?: string }
+
+    try {
+      const response = await fetch(endpoint, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       })
-    } else {
-      const { data: newTx, error: insertError } = await supabase
-        .from('cashflow_transactions')
-        .insert({ ...payload, status: 'active', created_by: user?.id ?? null })
-        .select()
-        .single()
-      if (insertError) {
-        toastTimerRef(`Gagal menambah transaksi: ${insertError.message}`, 'error')
+
+      result = await response.json().catch(() => ({}))
+
+      if (!response.ok || result.success === false) {
+        toastTimerRef(result.message || 'Gagal menyimpan transaksi.', 'error')
         setSaving(false)
         return
       }
-      if (newTx) {
-        await supabase.from('audit_logs').insert({
-          table_name: 'cashflow_transactions',
-          record_id: newTx.id,
-          action: 'cashflow_created',
-          old_data: null,
-          new_data: newTx as unknown as Record<string, unknown>,
-          changed_by: user?.id ?? null,
-          changed_at: new Date().toISOString(),
-        })
-      }
+    } catch {
+      toastTimerRef('Gagal terhubung ke server.', 'error')
+      setSaving(false)
+      return
     }
 
     setSaving(false)
     setModalOpen(false)
-    toastTimerRef(editTx ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil ditambahkan.', 'success')
+    toastTimerRef(
+      result.message || (editTx ? 'Transaksi berhasil diperbarui.' : 'Transaksi berhasil ditambahkan.'),
+      'success'
+    )
     invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
     load({ force: true })
     loadCashPositions({ force: true })
@@ -501,33 +517,65 @@ export default function CashflowPage() {
   async function handleVoid() {
     if (!voidTarget) return
     setSaving(true)
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    const user = session?.user
-    const { error: voidError } = await supabase
-      .from('cashflow_transactions')
-      .update({ status: 'void' as const, updated_by: user?.id ?? null })
-      .eq('id', voidTarget.id)
 
-    if (voidError) {
-      toastTimerRef(`Gagal void transaksi: ${voidError.message}`, 'error')
+    try {
+      const response = await fetch(`/api/cashflow/transactions/${voidTarget.id}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: null }),
+      })
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok || result.success === false) {
+        toastTimerRef(result.message || 'Gagal void transaksi.', 'error')
+        setSaving(false)
+        setVoidTarget(null)
+        return
+      }
+    } catch {
+      toastTimerRef('Gagal terhubung ke server.', 'error')
       setSaving(false)
       setVoidTarget(null)
       return
     }
 
-    await supabase.from('audit_logs').insert({
-      table_name: 'cashflow_transactions',
-      record_id: voidTarget.id,
-      action: 'cashflow_voided',
-      old_data: { status: voidTarget.status } as Record<string, unknown>,
-      new_data: { status: 'void' } as Record<string, unknown>,
-      changed_by: user?.id ?? null,
-      changed_at: new Date().toISOString(),
-    })
     setSaving(false)
     setVoidTarget(null)
     toastTimerRef('Transaksi berhasil divoid.', 'success')
+    invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
+    load({ force: true })
+    loadCashPositions({ force: true })
+  }
+
+  async function handleVoidAutoSplitGroup() {
+    if (!voidAutoSplitTarget?.auto_split_group_id) return
+    setSaving(true)
+
+    try {
+      const response = await fetch(`/api/cashflow/auto-split-groups/${voidAutoSplitTarget.auto_split_group_id}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Dibatalkan dari halaman cashflow.' }),
+      })
+      const result = await response.json().catch(() => ({}))
+
+      if (!response.ok || result.success === false) {
+        toastTimerRef(result.message || 'Gagal membatalkan auto split.', 'error')
+        setSaving(false)
+        setVoidAutoSplitTarget(null)
+        return
+      }
+
+      toastTimerRef(result.message || 'Auto split Kurir bawa Bahan berhasil dibatalkan.', 'success')
+    } catch {
+      toastTimerRef('Gagal terhubung ke server.', 'error')
+      setSaving(false)
+      setVoidAutoSplitTarget(null)
+      return
+    }
+
+    setSaving(false)
+    setVoidAutoSplitTarget(null)
     invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
     load({ force: true })
     loadCashPositions({ force: true })
@@ -598,6 +646,19 @@ export default function CashflowPage() {
   const filteredCats = categories.filter((c) =>
     !watchedType || c.default_type === watchedType || c.default_type === 'both'
   )
+  const selectedCategory = categories.find((c) => c.id === watchedCategoryId)
+  const isAutoSplitForm = watchedType === 'cash_out' && isKurirBawaBahanCategory(selectedCategory?.name)
+  const autoSplitAmount = Number(watchedAmount || 0)
+  const autoSplitAllocations = useMemo(
+    () => isAutoSplitForm ? distributeAutoSplitAmount(autoSplitAmount, branches) : [],
+    [autoSplitAmount, branches, isAutoSplitForm]
+  )
+  const autoSplitPreviewError = isAutoSplitForm
+    ? getAutoSplitPreviewError(autoSplitAmount, branches.length)
+    : null
+  const autoSplitRemainderCount = isAutoSplitForm && branches.length > 0
+    ? autoSplitAmount - Math.floor(autoSplitAmount / branches.length) * branches.length
+    : 0
 
   return (
     <div className="space-y-4">
@@ -801,6 +862,15 @@ export default function CashflowPage() {
                             </button>
                           </>
                         )}
+                        {tx.status === 'active' && isAutoSplitKurirChild(tx) && tx.auto_split_group_id && (
+                          <button
+                            onClick={() => setVoidAutoSplitTarget(tx)}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600"
+                            title="Void auto split"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {canDeleteCashflow(tx) && (
                           <button
                             onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
@@ -882,6 +952,15 @@ export default function CashflowPage() {
                         </button>
                       </>
                     )}
+                    {tx.status === 'active' && isAutoSplitKurirChild(tx) && tx.auto_split_group_id && (
+                      <button
+                        onClick={() => setVoidAutoSplitTarget(tx)}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600"
+                        title="Void auto split"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    )}
                     {canDeleteCashflow(tx) && (
                       <button
                         onClick={() => { setDeleteTarget(tx); setDeleteReason('') }}
@@ -918,7 +997,9 @@ export default function CashflowPage() {
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Cabang <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {isAutoSplitForm ? 'Cabang pencatat' : 'Cabang'} <span className="text-red-500">*</span>
+            </label>
             <select {...register('branch_id')} className="input-field">
               <option value="">Pilih cabang...</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
@@ -942,9 +1023,56 @@ export default function CashflowPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">Deskripsi</label>
             <textarea {...register('description')} className="input-field resize-none" rows={2} placeholder="Keterangan transaksi..." />
           </div>
+          {isAutoSplitForm && (
+            <div className="rounded-lg border border-sky-100 bg-sky-50 p-3">
+              <div className="flex items-start gap-2">
+                <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-sky-700" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-sky-900">Auto split Kurir bawa Bahan</p>
+                  <p className="mt-0.5 text-xs text-sky-700">
+                    Pengeluaran dengan kategori Kurir bawa Bahan akan otomatis dibagi rata ke semua outlet aktif.
+                  </p>
+                </div>
+              </div>
+
+              {autoSplitPreviewError ? (
+                <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-100 bg-white px-3 py-2 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>{autoSplitPreviewError}</span>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-slate-500">Outlet aktif</p>
+                      <p className="mt-0.5 font-semibold text-slate-900">{branches.length}</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-2">
+                      <p className="text-slate-500">Total</p>
+                      <p className="mt-0.5 break-words font-semibold text-slate-900 text-rupiah">{formatRupiah(autoSplitAmount)}</p>
+                    </div>
+                    <div className="rounded-lg bg-white px-3 py-2 col-span-2 sm:col-span-1">
+                      <p className="text-slate-500">Pembulatan</p>
+                      <p className="mt-0.5 font-semibold text-slate-900">
+                        {autoSplitRemainderCount > 0 ? `${autoSplitRemainderCount} outlet +Rp1` : 'Tidak ada'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-sky-100 bg-white">
+                    {autoSplitAllocations.map((allocation) => (
+                      <div key={allocation.branch_id} className="flex items-center justify-between gap-3 border-b border-slate-50 px-3 py-2 last:border-b-0">
+                        <span className="min-w-0 truncate text-sm text-slate-700">{allocation.branch_name}</span>
+                        <span className="flex-shrink-0 text-sm font-semibold text-slate-900 text-rupiah">{formatRupiah(allocation.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} className="btn-outline text-sm">Batal</button>
-            <button type="submit" disabled={saving} className="btn-primary text-sm">
+            <button type="submit" disabled={saving || Boolean(autoSplitPreviewError)} className="btn-primary text-sm">
               {saving ? 'Menyimpan...' : editTx ? 'Simpan' : 'Tambah'}
             </button>
           </div>
@@ -959,6 +1087,17 @@ export default function CashflowPage() {
         title="Void Transaksi"
         description={`Yakin ingin void transaksi "${voidTarget?.description || voidTarget?.category?.name}"? Transaksi tidak akan dihitung dalam laporan.`}
         confirmLabel="Void"
+        confirmClass="bg-rbn-red hover:bg-rbn-red-dark text-white"
+      />
+
+      <ConfirmModal
+        isOpen={!!voidAutoSplitTarget}
+        onClose={() => setVoidAutoSplitTarget(null)}
+        onConfirm={handleVoidAutoSplitGroup}
+        loading={saving}
+        title="Void Auto Split"
+        description={`Yakin ingin void auto split "${voidAutoSplitTarget?.description || voidAutoSplitTarget?.category?.name}"? Semua pembagian outlet dalam grup ini akan dibatalkan.`}
+        confirmLabel="Void Auto Split"
         confirmClass="bg-rbn-red hover:bg-rbn-red-dark text-white"
       />
 
