@@ -27,6 +27,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingSpinner, PageLoading } from '@/components/ui/LoadingSpinner'
 import { cn, formatDate, formatDateTime, formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import { invalidateCachedData } from '@/lib/utils/client-cache'
+import { checkDateAlreadyImportedBySource } from '@/lib/utils/import-date-status'
+import { IMPORT_BAHAN_BAKU_SOURCE } from '@/lib/import-bahan-baku/shared'
 
 type Decision = 'ignore' | 'update'
 
@@ -102,6 +104,11 @@ export default function ImportBahanBakuPage() {
   const [logs, setLogs] = useState<RawMaterialImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
 
+  // Status import per-tanggal (hanya berlaku untuk pilihan tanggal tunggal)
+  const [dateAlreadyImported, setDateAlreadyImported] = useState(false)
+  const [checkingImportStatus, setCheckingImportStatus] = useState(false)
+  const [forceRecheck, setForceRecheck] = useState(false)
+
   // Branch mapping state
   const [pendingMappings, setPendingMappings] = useState<Record<string, string>>({})
   const [savingMappingKey, setSavingMappingKey] = useState<string | null>(null)
@@ -154,6 +161,35 @@ export default function ImportBahanBakuPage() {
   }, [])
 
   useEffect(() => { loadMappings() }, [loadMappings])
+
+  // ----- Cek status import untuk tanggal yang dipilih -----
+  // Hanya berlaku saat memilih satu tanggal (startDate === endDate); untuk rentang
+  // tanggal, status per-hari tidak ditampilkan karena tombol mewakili seluruh rentang.
+  const checkImportStatus = useCallback(async () => {
+    if (!startDate || startDate !== endDate) {
+      setDateAlreadyImported(false)
+      return
+    }
+    setCheckingImportStatus(true)
+    try {
+      const supabase = createClient()
+      const already = await checkDateAlreadyImportedBySource(supabase, {
+        date: startDate,
+        branchId: branchId || undefined,
+        source: IMPORT_BAHAN_BAKU_SOURCE,
+      })
+      setDateAlreadyImported(already)
+    } catch {
+      setDateAlreadyImported(false)
+    } finally {
+      setCheckingImportStatus(false)
+    }
+  }, [startDate, endDate, branchId])
+
+  useEffect(() => {
+    setForceRecheck(false)
+    checkImportStatus()
+  }, [checkImportStatus])
 
   const unresolvedBranches = useMemo(() => {
     const seen = new Set<string>()
@@ -330,8 +366,8 @@ export default function ImportBahanBakuPage() {
       }
 
       invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|dashboard:)/)
-      await pullData({ keepSuccess: true })
-      await loadLogs()
+      setForceRecheck(false)
+      await Promise.all([pullData({ keepSuccess: true }), loadLogs(), checkImportStatus()])
       setSuccess(payload.result?.message || 'Data pengeluaran bahan baku berhasil disimpan.')
     } catch {
       setError('Gagal menyimpan data ke laporan keuangan.')
@@ -387,7 +423,7 @@ export default function ImportBahanBakuPage() {
           <button
             type="button"
             onClick={() => pullData()}
-            disabled={pulling || saving}
+            disabled={pulling || saving || checkingImportStatus || (dateAlreadyImported && !forceRecheck)}
             className="btn-primary flex w-full items-center gap-2 text-sm lg:w-auto"
           >
             {pulling ? <LoadingSpinner className="h-4 w-4 border-white border-t-transparent" /> : <CloudDownload className="h-4 w-4" />}
@@ -403,6 +439,24 @@ export default function ImportBahanBakuPage() {
             {saving ? 'Menyimpan...' : 'Simpan ke Laporan Keuangan'}
           </button>
         </div>
+
+        {checkingImportStatus && (
+          <p className="mt-3 text-xs text-slate-400">Memeriksa status tanggal...</p>
+        )}
+
+        {!checkingImportStatus && dateAlreadyImported && !forceRecheck && (
+          <div className="mt-3 flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 w-fit">
+            <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+            Tanggal ini sudah pernah diimport
+            <button
+              type="button"
+              onClick={() => setForceRecheck(true)}
+              className="underline decoration-dotted underline-offset-2 hover:text-emerald-900"
+            >
+              Tetap tarik data
+            </button>
+          </div>
+        )}
       </section>
 
       {pulling && (

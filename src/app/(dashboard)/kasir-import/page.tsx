@@ -23,6 +23,9 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingSpinner, PageLoading } from '@/components/ui/LoadingSpinner'
 import { cn, formatDate, formatDateTime, formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import { invalidateCachedData } from '@/lib/utils/client-cache'
+import { checkDateAlreadyImported } from '@/lib/utils/import-date-status'
+
+const KASIR_IMPORT_KEY_PREFIXES = ['kasir-sales:', 'kasir-expenses:']
 
 // -----------------------------------------------
 // Types
@@ -724,6 +727,11 @@ export default function KasirImportPage() {
   const [logs,        setLogs]        = useState<KasirImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
 
+  // Status import per-tanggal (hanya berlaku untuk pilihan tanggal tunggal)
+  const [dateAlreadyImported,  setDateAlreadyImported]  = useState(false)
+  const [checkingImportStatus, setCheckingImportStatus] = useState(false)
+  const [forceRecheck,         setForceRecheck]         = useState(false)
+
   // Load branches
   useEffect(() => {
     createClient()
@@ -749,6 +757,35 @@ export default function KasirImportPage() {
   }, [])
 
   useEffect(() => { loadLogs() }, [loadLogs])
+
+  // ----- Cek status import untuk tanggal yang dipilih -----
+  // Hanya berlaku saat memilih satu tanggal (startDate === endDate); untuk rentang
+  // tanggal, status per-hari tidak ditampilkan karena tombol mewakili seluruh rentang.
+  const checkImportStatus = useCallback(async () => {
+    if (!startDate || startDate !== endDate) {
+      setDateAlreadyImported(false)
+      return
+    }
+    setCheckingImportStatus(true)
+    try {
+      const supabase = createClient()
+      const already = await checkDateAlreadyImported(supabase, {
+        date: startDate,
+        branchId: branchId || undefined,
+        importKeyPrefixes: KASIR_IMPORT_KEY_PREFIXES,
+      })
+      setDateAlreadyImported(already)
+    } catch {
+      setDateAlreadyImported(false)
+    } finally {
+      setCheckingImportStatus(false)
+    }
+  }, [startDate, endDate, branchId])
+
+  useEffect(() => {
+    setForceRecheck(false)
+    checkImportStatus()
+  }, [checkImportStatus])
 
   // ----- Mapping cabang kasir -----
   async function handleSaveMapping(kasirName: string) {
@@ -865,7 +902,8 @@ export default function KasirImportPage() {
       setImportResult(json.result!)
       setPageState('result')
       invalidateCachedData(/^(cashflow:|cash-positions:|cashflow-analysis:|sales-analysis:|dashboard:)/)
-      await loadLogs()
+      setForceRecheck(false)
+      await Promise.all([loadLogs(), checkImportStatus()])
     } catch {
       setError('Gagal mengirim permintaan ke server. Periksa koneksi dan coba lagi.')
       setPageState('review')
@@ -947,7 +985,7 @@ export default function KasirImportPage() {
             <button
               type="button"
               onClick={handlePreview}
-              disabled={pageState === 'previewing'}
+              disabled={pageState === 'previewing' || checkingImportStatus || (dateAlreadyImported && !forceRecheck)}
               className="btn-primary flex items-center gap-2 text-sm"
             >
               {pageState === 'previewing'
@@ -955,6 +993,24 @@ export default function KasirImportPage() {
                 : <><CloudDownload className="h-4 w-4" /> Tarik Data dari POS</>
               }
             </button>
+
+            {checkingImportStatus && (
+              <span className="text-xs text-slate-400">Memeriksa status tanggal...</span>
+            )}
+
+            {!checkingImportStatus && dateAlreadyImported && !forceRecheck && (
+              <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700">
+                <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+                Tanggal ini sudah pernah diimport
+                <button
+                  type="button"
+                  onClick={() => setForceRecheck(true)}
+                  className="underline decoration-dotted underline-offset-2 hover:text-emerald-900"
+                >
+                  Tetap tarik data
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Info box */}
