@@ -234,12 +234,14 @@ export function shouldSkipPaymentMethod(raw: string): boolean {
 
 // Exclude setoran tunai: internal cash transfer (outlet → HQ), not an operational expense.
 // Cek kategori/nama kas keluar — toleran terhadap variasi penulisan
-// ("Setoran Tunai", "SETORAN TUNAI", "setoran_tunai", "setoran").
+// ("Setoran Tunai", "SETORAN TUNAI", "setoran_tunai", "setoran",
+// "Setoran #aa9e0856-fff5-470f-bb4e-dc9e6c555aa7" — POS menambahkan ID transaksi unik
+// di belakang kata "Setoran", jadi dicek sebagai awalan kata, bukan exact match).
 export function isSetoranTunai(...values: Array<string | null | undefined>): boolean {
   return values.some((value) => {
     if (!value) return false
     const normalized = value.toLowerCase().replace(/[_\s]+/g, ' ').trim()
-    return normalized === 'setoran tunai' || normalized === 'setoran'
+    return /^setoran(\s|#|$)/.test(normalized)
   })
 }
 
