@@ -858,6 +858,23 @@ async function confirmKasKeluar(
   categories: LocalCategory[],
   mapping?: KasirExpenseMappingConfig
 ): Promise<void> {
+  // Guard: setoran tunai adalah transfer internal (outlet → pusat), bukan beban
+  // operasional. Filter utama ada di pullKasirToQueue, tapi baris antrian lama
+  // (ter-pull sebelum filter diperketat) bisa masih tersimpan — tolak otomatis
+  // di sini supaya tidak pernah bisa masuk catatan kas keluar.
+  if (isSetoranTunai(item.kategori, item.keterangan)) {
+    await supabase
+      .from('kasir_sync_queue')
+      .update({
+        status: 'rejected',
+        rejected_at: new Date().toISOString(),
+        rejected_by: userId,
+        reject_reason: 'Setoran tunai — transfer internal, otomatis dikecualikan dari catatan kas keluar.',
+      })
+      .eq('id', item.id)
+    throw new Error('Setoran tunai otomatis ditolak — transfer internal, tidak dicatat sebagai kas keluar.')
+  }
+
   const amount = item.nominal ?? 0
   if (amount <= 0) throw new Error('Nominal kas keluar tidak valid.')
   const isAutoSplitKurirBawaBahan = isKurirBawaBahanCategory(item.kategori)
