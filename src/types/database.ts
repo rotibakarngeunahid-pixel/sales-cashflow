@@ -5,7 +5,7 @@ export type KasirSyncItemStatus = 'pending' | 'confirmed' | 'rejected'
 export type KasirSyncItemType = 'penjualan' | 'kas_keluar'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer' | 'auto_split_kurir'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer' | 'auto_split_kurir' | 'inventori_waste'
 export type CashflowAutoSplitGroupStatus = 'active' | 'void'
 export type CashflowAutoSplitEntrySource = 'manual_cashflow' | 'kasir_import' | 'kasir_sync'
 
@@ -15,6 +15,7 @@ export type KasirPaymentMethod = 'Tunai' | 'QRIS' | 'Tunai+QRIS'
 export type CashflowStatus = 'active' | 'void'
 export type CategoryDefaultType = 'cash_in' | 'cash_out' | 'both'
 export type RawMaterialImportStatus = 'success' | 'failed'
+export type FoodWasteImportLogStatus = 'success' | 'failed'
 
 export interface Profile {
   id: string
@@ -241,6 +242,33 @@ export interface BebanTransfer {
   amount: number
   description: string | null
   reference_group_id: string
+  created_by: string | null
+  created_at: string
+  actor?: Pick<Profile, 'full_name' | 'email'> | null
+}
+
+export interface InventoriBranchMapping {
+  id: string
+  inventori_name: string
+  branch_id: string
+  branch?: Pick<Branch, 'id' | 'name'> | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface FoodWasteImportLog {
+  id: string
+  imported_at: string
+  period_start: string
+  period_end: string
+  branch_count: number
+  total_amount: number
+  item_count: number
+  missing_price_count: number
+  status: FoodWasteImportLogStatus
+  message: string | null
+  triggered_by: string
   created_by: string | null
   created_at: string
   actor?: Pick<Profile, 'full_name' | 'email'> | null
@@ -738,6 +766,77 @@ export interface Database {
             columns: ['to_branch_id']
             isOneToOne: false
             referencedRelation: 'branches'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      inventori_branch_mappings: {
+        Row: {
+          id: string
+          inventori_name: string
+          branch_id: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          inventori_name: string
+          branch_id: string
+          created_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          inventori_name?: string
+          branch_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'inventori_branch_mappings_branch_id_fkey'
+            columns: ['branch_id']
+            isOneToOne: false
+            referencedRelation: 'branches'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      food_waste_import_logs: {
+        Row: {
+          id: string
+          imported_at: string
+          period_start: string
+          period_end: string
+          branch_count: number
+          total_amount: number
+          item_count: number
+          missing_price_count: number
+          status: FoodWasteImportLogStatus
+          message: string | null
+          triggered_by: string
+          created_by: string | null
+          created_at: string
+        }
+        Insert: {
+          imported_at?: string
+          period_start: string
+          period_end: string
+          branch_count?: number
+          total_amount?: number
+          item_count?: number
+          missing_price_count?: number
+          status: FoodWasteImportLogStatus
+          message?: string | null
+          triggered_by?: string
+          created_by?: string | null
+          created_at?: string
+        }
+        Update: never
+        Relationships: [
+          {
+            foreignKeyName: 'food_waste_import_logs_created_by_fkey'
+            columns: ['created_by']
+            isOneToOne: false
+            referencedRelation: 'profiles'
             referencedColumns: ['id']
           }
         ]

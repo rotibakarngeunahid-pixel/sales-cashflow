@@ -7,6 +7,10 @@
     {
       "path": "/api/kasir-sync/pull",
       "schedule": "0 22 * * *"
+    },
+    {
+      "path": "/api/food-waste-import/pull",
+      "schedule": "30 22 * * *"
     }
   ]
 }

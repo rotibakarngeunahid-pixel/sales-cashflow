@@ -21,6 +21,7 @@ import {
   Package,
   ArrowLeftRight,
   RotateCcw,
+  Trash2,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -51,6 +52,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/cashflow', label: 'Cashflow', icon: Wallet },
       { href: '/kasir-import', label: 'Import dari POS', icon: Store },
       { href: '/cashflow/import-bahan-baku', label: 'Import Bahan Baku', icon: Package },
+      { href: '/cashflow/import-food-waste', label: 'Import Food Waste', icon: Trash2 },
       { href: '/cashflow/transfer-beban', label: 'Transfer Beban Pokok', icon: ArrowLeftRight },
       { href: '/cashflow/analysis', label: 'Analisa Cashflow', icon: BarChart3 },
       { href: '/cashflow/categories', label: 'Kategori Cashflow', icon: Tag },
