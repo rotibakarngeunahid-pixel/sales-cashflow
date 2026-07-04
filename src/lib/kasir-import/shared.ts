@@ -28,13 +28,38 @@ export type PaymentMethodFilter = 'Tunai' | 'QRIS' | 'Tunai+QRIS'
 export const TUNAI_ALIASES = ['tunai', 'cash', 'uang tunai', 'bayar tunai', 'cash payment']
 export const QRIS_ALIASES = ['qris', 'qr', 'qr code', 'quick response', 'qr payment']
 
-// Metode yang harus DISKIP (online platform)
+// Metode yang harus DISKIP (bukan Cash/QRIS, dan bukan platform online yang dideteksi khusus)
 export const SKIP_PAYMENT_METHODS = [
-  'gofood', 'grabfood', 'shopee', 'shopeefood', 'shopee food',
   'transfer', 'bank transfer', 'bank', 'debit', 'kredit',
   'credit card', 'kartu kredit', 'kartu debit', 'ovo', 'dana', 'linkaja',
   'gopay', 'shopeepay', 'akulaku', 'kredivo',
 ]
+
+// ----- Online platform (GoFood/GrabFood/ShopeeFood) -----
+// Nominal yang tercatat di kasir untuk metode ini adalah NETT (sudah dipotong
+// komisi/biaya platform), bukan harga jual asli — dideteksi terpisah dari
+// Tunai/QRIS supaya bisa dilengkapi gross+potongannya di halaman Penjualan Online.
+
+export type OnlinePlatform = 'gofood' | 'grabfood' | 'shopeefood'
+
+export const PLATFORM_LABELS: Record<OnlinePlatform, string> = {
+  gofood: 'GoFood',
+  grabfood: 'GrabFood',
+  shopeefood: 'ShopeeFood',
+}
+
+export const GOFOOD_ALIASES = ['gofood', 'go-food', 'go food']
+export const GRABFOOD_ALIASES = ['grabfood', 'grab-food', 'grab food']
+export const SHOPEEFOOD_ALIASES = ['shopeefood', 'shopee-food', 'shopee food', 'shopee']
+
+export function detectOnlinePlatform(raw: string): OnlinePlatform | null {
+  const lower = raw.toLowerCase().trim()
+  if (!lower) return null
+  if (GOFOOD_ALIASES.some((alias) => lower.includes(alias))) return 'gofood'
+  if (GRABFOOD_ALIASES.some((alias) => lower.includes(alias))) return 'grabfood'
+  if (SHOPEEFOOD_ALIASES.some((alias) => lower.includes(alias))) return 'shopeefood'
+  return null
+}
 
 // ----- Item status -----
 
@@ -62,6 +87,7 @@ export interface KasirSalePreviewItem {
   branchId: string | null        // UUID cabang di sistem keuangan (null jika tidak ditemukan)
   paymentMethod: string          // metode bayar dari kasir
   paymentCategory: 'Tunai' | 'QRIS' | null  // kategori di sistem keuangan
+  platform: OnlinePlatform | null  // GoFood/GrabFood/ShopeeFood — null kalau bukan online
   amount: number
   cashier: string
   status: KasirSaleItemStatus
@@ -77,6 +103,8 @@ export interface KasirSalePreviewSummary {
   totalCash: number
   totalQris: number
   totalAmount: number
+  totalOnlineDetected: number       // jumlah transaksi online terdeteksi (belum masuk cashflow)
+  totalOnlineDetectedAmount: number // total nett yang terdeteksi, menunggu dilengkapi
   byBranch: Array<{ branchName: string; totalCash: number; totalQris: number; total: number }>
   byDate: Array<{ date: string; total: number; count: number }>
 }
@@ -167,6 +195,11 @@ export interface KasirImportResult {
   totalAmount: number
   message: string
   errors: string[]
+  // Transaksi online (GoFood/GrabFood/ShopeeFood) yang TERTAMPUNG untuk
+  // dilengkapi di halaman Penjualan Online — bukan bagian dari totalAmount
+  // karena belum masuk cashflow.
+  onlineDetectedCount?: number
+  onlineDetectedAmount?: number
 }
 
 // ----- Combined import result (penjualan + kas keluar sekaligus) -----
@@ -198,6 +231,8 @@ export interface CombinedImportResult {
   salesByBranch:    SaleBranchDetail[]
   expenseItems:     ExpenseItemDetail[]
   expensesByBranch: Array<{ branchName: string; total: number; count: number }>
+  onlineDetectedCount:  number
+  onlineDetectedAmount: number
 }
 
 // Preview result (data fetched from kasir, NOT yet saved to DB)
@@ -216,6 +251,8 @@ export interface CombinedPreviewResult {
   expenseItems:                ExpenseItemDetail[]
   expensesByBranch:            Array<{ branchName: string; total: number; count: number }>
   expensesUnmatchedBranchNames: string[]  // nama cabang kasir yg tidak cocok
+  onlineDetectedCount:          number    // transaksi GoFood/GrabFood/ShopeeFood baru terdeteksi
+  onlineDetectedAmount:         number
 }
 
 // ----- Helpers -----
@@ -275,6 +312,14 @@ export function normalizeBranchName(name: string): string {
 
 export function makeSaleImportKey(branchName: string, transactionId: string): string {
   return `kasir-sales:${normalizeBranchName(branchName)}:${transactionId}`
+}
+
+export function makeOnlineSaleImportKey(
+  platform: OnlinePlatform,
+  branchName: string,
+  transactionId: string
+): string {
+  return `online-sales:${platform}:${normalizeBranchName(branchName)}:${transactionId}`
 }
 
 export function makeExpenseImportKey(branchName: string, expenseId: string): string {

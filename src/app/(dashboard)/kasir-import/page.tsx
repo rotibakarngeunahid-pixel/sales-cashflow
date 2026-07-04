@@ -192,6 +192,14 @@ function CombinedPreviewPanel({
           {data.salesNewCount === 0 && (
             <p className="text-xs text-slate-400 italic text-center py-1">Tidak ada penjualan baru.</p>
           )}
+          {data.onlineDetectedCount > 0 && (
+            <div className="rounded-xl bg-purple-50 px-4 py-3 flex items-center justify-between">
+              <span className="text-xs font-semibold text-purple-700">
+                {data.onlineDetectedCount} transaksi online terdeteksi (GoFood/GrabFood/ShopeeFood)
+              </span>
+              <span className="text-sm font-extrabold text-purple-700">{formatRupiah(data.onlineDetectedAmount)}</span>
+            </div>
+          )}
         </div>
 
         {/* Kas Keluar */}
@@ -457,7 +465,7 @@ function CombinedPreviewPanel({
 // -----------------------------------------------
 
 function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
-  const { sales, expenses, salesByBranch, expenseItems, expensesByBranch } = result
+  const { sales, expenses, salesByBranch, expenseItems, expensesByBranch, onlineDetectedCount, onlineDetectedAmount } = result
 
   return (
     <div className="space-y-4">
@@ -512,6 +520,14 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
           )}
           {sales.totalSuccess === 0 && sales.totalFailed === 0 && (
             <p className="text-xs text-slate-400 italic">{sales.message}</p>
+          )}
+          {onlineDetectedCount > 0 && (
+            <div className="rounded-xl bg-purple-50 px-4 py-3 flex items-center justify-between">
+              <span className="text-xs font-semibold text-purple-700">
+                {onlineDetectedCount} transaksi online terdeteksi — lengkapi di Penjualan Online
+              </span>
+              <span className="text-sm font-extrabold text-purple-700">{formatRupiah(onlineDetectedAmount)}</span>
+            </div>
           )}
         </div>
 
@@ -1019,7 +1035,7 @@ export default function KasirImportPage() {
             <ul className="mt-1 space-y-0.5 ml-2">
               <li>✓ Penjualan Tunai dan QRIS sebagai <strong>Pemasukan</strong></li>
               <li>✓ Kas Keluar (pengeluaran staff) sebagai <strong>Pengeluaran</strong></li>
-              <li>✓ Transaksi online delivery (GoFood, GrabFood, ShopeeFood) <strong>tidak diimport</strong></li>
+              <li>✓ Transaksi online delivery (GoFood, GrabFood, ShopeeFood) <strong>terdeteksi terpisah</strong> — lengkapi di halaman <strong>Penjualan Online</strong></li>
               <li>✓ Data yang sudah pernah diimport <strong>otomatis dilewati</strong> (tidak dobel)</li>
               <li>✓ Semua waktu dalam <strong>WITA (UTC+8)</strong></li>
             </ul>

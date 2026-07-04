@@ -22,6 +22,7 @@ import {
   ArrowLeftRight,
   RotateCcw,
   Trash2,
+  Smartphone,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -42,6 +43,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/sales/input', label: 'Input Penjualan', icon: PlusSquare },
+      { href: '/sales/online', label: 'Penjualan Online', icon: Smartphone },
       { href: '/sales/reports', label: 'Laporan Penjualan', icon: FileText },
       { href: '/sales/analysis', label: 'Analisa Sales', icon: LineChart },
     ],
