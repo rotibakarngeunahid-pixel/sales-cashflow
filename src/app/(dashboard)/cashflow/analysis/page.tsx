@@ -40,6 +40,18 @@ import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
 import { PageLoading } from '@/components/ui/LoadingSpinner'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { getCachedData, getOrFetchCached } from '@/lib/utils/client-cache'
+import {
+  getCashflowAmount,
+  getExpenseContribution,
+  isAdditionalRevenueCashIn,
+  isBebanTransfer,
+  isCogsCategory,
+  isOtherIncomeCashIn,
+  isRevenueCashIn,
+  normalizeCategoryName,
+  percent,
+  toNumber,
+} from '@/lib/cashflow/pnl'
 
 const CHART_COLORS = ['#DC2626', '#EA580C', '#D97706', '#16A34A', '#2563EB', '#7C3AED', '#DB2777', '#0F766E']
 const PROFIT_COLORS = {
@@ -121,69 +133,6 @@ type BusinessSummary = {
   description: string
   tone: 'good' | 'warning' | 'danger' | 'neutral'
   points: { label: string; value: string }[]
-}
-
-function toNumber(value: number | null | undefined) {
-  return Number(value ?? 0)
-}
-
-function percent(part: number, total: number) {
-  return total > 0 ? (part / total) * 100 : 0
-}
-
-function getCashflowAmount(tx: CashflowTransaction) {
-  if (tx.transaction_type === 'cash_in') {
-    return toNumber(tx.cash_in) || toNumber(tx.amount)
-  }
-
-  return toNumber(tx.cash_out) || toNumber(tx.amount)
-}
-
-// Transfer beban antar cabang BUKAN pendapatan/beban baru di level usaha,
-// melainkan reklasifikasi beban pokok: cabang pengirim bebannya berkurang
-// (dicatat sebagai cash_in) dan cabang penerima bebannya bertambah (cash_out).
-function isBebanTransfer(tx: CashflowTransaction) {
-  return tx.source === 'beban_transfer'
-}
-
-function normalizeCategoryName(name?: string | null) {
-  return (name || '').trim().toLowerCase()
-}
-
-function isSalesRevenueCategory(tx: CashflowTransaction) {
-  const name = normalizeCategoryName(tx.category?.name)
-  return name === 'penjualan' || name.startsWith('penjualan ')
-}
-
-function isRevenueCashIn(tx: CashflowTransaction) {
-  return tx.transaction_type === 'cash_in'
-    && !isBebanTransfer(tx)
-    && (tx.source === 'sales' || isSalesRevenueCategory(tx))
-}
-
-function isAdditionalRevenueCashIn(tx: CashflowTransaction) {
-  return isRevenueCashIn(tx) && tx.source !== 'sales'
-}
-
-function isOtherIncomeCashIn(tx: CashflowTransaction) {
-  return tx.transaction_type === 'cash_in'
-    && !isBebanTransfer(tx)
-    && !isRevenueCashIn(tx)
-}
-
-// HPP/COGS: kategori "Beban Pokok Pendapatan" (sudah menyatukan "Pembelian Bahan Baku", lihat migration 013).
-function isCogsCategory(tx: CashflowTransaction) {
-  return normalizeCategoryName(tx.category?.name) === 'beban pokok pendapatan'
-}
-
-// Kontribusi transaksi ke total beban (contra-beban untuk sisi pengirim transfer).
-// Positif = menambah beban, negatif = mengurangi beban.
-function getExpenseContribution(tx: CashflowTransaction) {
-  const amount = getCashflowAmount(tx)
-  if (isBebanTransfer(tx)) {
-    return tx.transaction_type === 'cash_in' ? -amount : amount
-  }
-  return tx.transaction_type === 'cash_out' ? amount : 0
 }
 
 function formatShortRupiah(value: number) {

@@ -23,6 +23,7 @@ import {
   RotateCcw,
   Trash2,
   Smartphone,
+  Target,
 } from 'lucide-react'
 import type { Profile } from '@/types/database'
 import { cn } from '@/lib/utils/format'
@@ -57,6 +58,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { href: '/cashflow/import-food-waste', label: 'Import Food Waste', icon: Trash2 },
       { href: '/cashflow/transfer-beban', label: 'Transfer Beban Pokok', icon: ArrowLeftRight },
       { href: '/cashflow/analysis', label: 'Analisa Cashflow', icon: BarChart3 },
+      { href: '/cashflow/proyeksi', label: 'Proyeksi Laba Rugi', icon: Target },
       { href: '/cashflow/categories', label: 'Kategori Cashflow', icon: Tag },
     ],
   },
