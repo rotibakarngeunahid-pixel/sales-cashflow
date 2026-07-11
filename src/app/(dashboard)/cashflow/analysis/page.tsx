@@ -28,6 +28,7 @@ import {
   PieChart as PieChartIcon,
   RefreshCw,
   Scale,
+  ShoppingBag,
   TrendingUp,
   Wallet,
 } from 'lucide-react'
@@ -68,6 +69,11 @@ type BranchMetric = {
   otherIncome: number
   grossIncome: number
   expense: number
+  cogs: number
+  cogsRatio: number
+  grossProfit: number
+  grossMargin: number
+  operatingExpense: number
   netProfit: number
   profitMargin: number
   expenseRatio: number
@@ -165,6 +171,11 @@ function isOtherIncomeCashIn(tx: CashflowTransaction) {
     && !isRevenueCashIn(tx)
 }
 
+// HPP/COGS: kategori "Beban Pokok Pendapatan" (sudah menyatukan "Pembelian Bahan Baku", lihat migration 013).
+function isCogsCategory(tx: CashflowTransaction) {
+  return normalizeCategoryName(tx.category?.name) === 'beban pokok pendapatan'
+}
+
 // Kontribusi transaksi ke total beban (contra-beban untuk sisi pengirim transfer).
 // Positif = menambah beban, negatif = mengurangi beban.
 function getExpenseContribution(tx: CashflowTransaction) {
@@ -198,6 +209,11 @@ function createBranchMetric(branchId: string, branchName: string): BranchMetric 
     otherIncome: 0,
     grossIncome: 0,
     expense: 0,
+    cogs: 0,
+    cogsRatio: 0,
+    grossProfit: 0,
+    grossMargin: 0,
+    operatingExpense: 0,
     netProfit: 0,
     profitMargin: 0,
     expenseRatio: 0,
@@ -555,15 +571,28 @@ export default function CashflowAnalysisPage() {
       .reduce((sum, tx) => sum + getCashflowAmount(tx), 0)
     // Beban = total cash out, dikurangi kredit transfer beban (sisi pengirim).
     const expense = cashflow.reduce((sum, tx) => sum + getExpenseContribution(tx), 0)
+    // HPP/COGS: hanya kategori "Beban Pokok Pendapatan" (termasuk bahan baku + transfer beban pokok antar cabang).
+    const cogs = cashflow
+      .filter((tx) => isCogsCategory(tx) && (tx.transaction_type === 'cash_out' || isBebanTransfer(tx)))
+      .reduce((sum, tx) => sum + getExpenseContribution(tx), 0)
+    const operatingExpense = expense - cogs
     const cashPosition = positionRows.reduce((sum, row) => sum + toNumber(row.cash_in) - toNumber(row.cash_out), 0)
     const grossIncome = revenue + otherIncome
     const netProfit = grossIncome - expense
+    // Laba kotor = revenue penjualan dikurangi HPP saja, sebelum beban operasional (gaji, sewa, dll).
+    const grossProfit = revenue - cogs
 
     return {
       revenue,
       otherIncome,
       grossIncome,
       expense,
+      cogs,
+      cogsRatio: percent(cogs, revenue),
+      grossProfit,
+      grossMargin: percent(grossProfit, revenue),
+      operatingExpense,
+      opexRatio: percent(operatingExpense, grossIncome),
       netProfit,
       profitMargin: percent(netProfit, grossIncome),
       expenseRatio: percent(expense, grossIncome),
@@ -611,7 +640,9 @@ export default function CashflowAnalysisPage() {
 
       // Transfer beban: reklasifikasi beban antar cabang, bukan pendapatan/cash flow operasional.
       if (isBebanTransfer(tx)) {
-        metric.expense += getExpenseContribution(tx)
+        const contribution = getExpenseContribution(tx)
+        metric.expense += contribution
+        if (isCogsCategory(tx)) metric.cogs += contribution
         return
       }
 
@@ -625,6 +656,7 @@ export default function CashflowAnalysisPage() {
       } else {
         metric.cashOut += amount
         metric.expense += amount
+        if (isCogsCategory(tx)) metric.cogs += amount
       }
     })
 
@@ -637,11 +669,16 @@ export default function CashflowAnalysisPage() {
       .map((metric) => {
         const grossIncome = metric.revenue + metric.otherIncome
         const netProfit = grossIncome - metric.expense
+        const grossProfit = metric.revenue - metric.cogs
 
         return {
           ...metric,
           grossIncome,
           netProfit,
+          grossProfit,
+          grossMargin: percent(grossProfit, metric.revenue),
+          cogsRatio: percent(metric.cogs, metric.revenue),
+          operatingExpense: metric.expense - metric.cogs,
           netCashflow: metric.cashIn - metric.cashOut,
           profitMargin: percent(netProfit, grossIncome),
           expenseRatio: percent(metric.expense, grossIncome),
@@ -799,6 +836,19 @@ export default function CashflowAnalysisPage() {
       }))
   }, [branchMetrics])
 
+  const cogsChartData = useMemo(() => {
+    return branchMetrics
+      .filter((branch) => branch.revenue > 0)
+      .map((branch) => ({
+        name: branch.branchName,
+        cogsRatio: branch.cogsRatio,
+        cogs: branch.cogs,
+        revenue: branch.revenue,
+      }))
+      .sort((a, b) => b.cogsRatio - a.cogsRatio)
+      .slice(0, 10)
+  }, [branchMetrics])
+
   const insights = useMemo<Insight[]>(() => {
     const rows: Insight[] = []
     const topExpense = expenseCategories[0]
@@ -829,6 +879,20 @@ export default function CashflowAnalysisPage() {
         description: `Margin bersih ${formatPercentage(summary.profitMargin)} dari income.`,
         tone: 'good',
         icon: <ArrowUpRight className="h-4 w-4" />,
+      })
+    }
+
+    if (summary.revenue > 0) {
+      rows.push({
+        title: 'Rasio HPP (Bahan Baku)',
+        value: formatPercentage(summary.cogsRatio),
+        description: summary.cogsRatio > 40
+          ? `HPP ${formatRupiah(summary.cogs)} sudah di atas 40% dari revenue — cek harga bahan baku, porsi, atau food waste.`
+          : summary.cogsRatio > 30
+            ? `HPP ${formatRupiah(summary.cogs)}, masih dalam rentang wajar tapi mendekati batas ideal 30%.`
+            : `HPP ${formatRupiah(summary.cogs)}, terkendali baik di bawah 30% dari revenue.`,
+        tone: summary.cogsRatio > 40 ? 'danger' : summary.cogsRatio > 30 ? 'warning' : 'good',
+        icon: <ShoppingBag className="h-4 w-4" />,
       })
     }
 
@@ -913,6 +977,10 @@ export default function CashflowAnalysisPage() {
     const branchText = !selectedBranch && topBranch
       ? ` Kontributor sales terbesar adalah ${topBranch.branchName} dengan porsi ${formatPercentage(topBranch.revenueShare)} dari revenue.`
       : ''
+    const cogsText = summary.revenue > 0
+      ? ` HPP (bahan baku) menyerap ${formatRupiah(summary.cogs)} atau ${formatPercentage(summary.cogsRatio)} dari revenue, menyisakan laba kotor ${formatRupiah(summary.grossProfit)} sebelum beban operasional.`
+      : ''
+    const hppPoint = { label: 'HPP / Revenue', value: `${formatPercentage(summary.cogsRatio)} (${formatRupiah(summary.cogs)})` }
 
     if (summary.grossIncome <= 0) {
       return {
@@ -933,13 +1001,13 @@ export default function CashflowAnalysisPage() {
       return {
         title: 'Usaha sedang rugi pada periode ini',
         badge: 'Rugi',
-        description: `Untuk ${scope}, beban ${formatRupiah(summary.expense)} melebihi income ${formatRupiah(summary.grossIncome)}, sehingga rugi bersih menjadi ${formatRupiah(summary.netProfit)}. Prioritasnya adalah menekan beban terbesar dan mengecek cabang dengan profit negatif.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, beban ${formatRupiah(summary.expense)} melebihi income ${formatRupiah(summary.grossIncome)}, sehingga rugi bersih menjadi ${formatRupiah(summary.netProfit)}. Prioritasnya adalah menekan beban terbesar dan mengecek cabang dengan profit negatif.${cogsText}${expenseText}${branchText}${pendingText}`,
         tone: 'danger',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
           { label: 'Beban', value: formatRupiah(summary.expense) },
           { label: 'Margin', value: formatPercentage(summary.profitMargin) },
-          { label: 'Net Cashflow', value: formatRupiah(summary.netCashflow) },
+          hppPoint,
         ],
       }
     }
@@ -948,13 +1016,13 @@ export default function CashflowAnalysisPage() {
       return {
         title: 'Income kuat, beban rendah',
         badge: 'Sangat sehat',
-        description: `Untuk ${scope}, income mencapai ${formatRupiah(summary.grossIncome)} dan beban hanya ${formatRupiah(summary.expense)} (${formatPercentage(summary.expenseRatio)} dari income). Profit bersih ${formatRupiah(summary.netProfit)} dengan margin ${formatPercentage(summary.profitMargin)}, jadi cashflow periode ini sangat kuat.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, income mencapai ${formatRupiah(summary.grossIncome)} dan beban hanya ${formatRupiah(summary.expense)} (${formatPercentage(summary.expenseRatio)} dari income). Profit bersih ${formatRupiah(summary.netProfit)} dengan margin ${formatPercentage(summary.profitMargin)}, jadi cashflow periode ini sangat kuat.${cogsText}${expenseText}${branchText}${pendingText}`,
         tone: 'good',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
           { label: 'Beban', value: formatRupiah(summary.expense) },
           { label: 'Profit', value: formatRupiah(summary.netProfit) },
-          { label: 'Margin', value: formatPercentage(summary.profitMargin) },
+          hppPoint,
         ],
       }
     }
@@ -963,13 +1031,13 @@ export default function CashflowAnalysisPage() {
       return {
         title: 'Kondisi usaha cukup sehat',
         badge: 'Sehat',
-        description: `Untuk ${scope}, usaha menghasilkan profit ${formatRupiah(summary.netProfit)} dari income ${formatRupiah(summary.grossIncome)}. Rasio beban ${formatPercentage(summary.expenseRatio)}, sehingga margin masih sehat tetapi tetap perlu dipantau agar biaya tidak naik terlalu cepat.${expenseText}${branchText}${pendingText}`,
+        description: `Untuk ${scope}, usaha menghasilkan profit ${formatRupiah(summary.netProfit)} dari income ${formatRupiah(summary.grossIncome)}. Rasio beban ${formatPercentage(summary.expenseRatio)}, sehingga margin masih sehat tetapi tetap perlu dipantau agar biaya tidak naik terlalu cepat.${cogsText}${expenseText}${branchText}${pendingText}`,
         tone: 'good',
         points: [
           { label: 'Income', value: formatRupiah(summary.grossIncome) },
           { label: 'Beban', value: formatRupiah(summary.expense) },
           { label: 'Profit', value: formatRupiah(summary.netProfit) },
-          { label: 'Kas', value: formatRupiah(summary.cashPosition) },
+          hppPoint,
         ],
       }
     }
@@ -977,13 +1045,13 @@ export default function CashflowAnalysisPage() {
     return {
       title: 'Profit masih positif, tetapi margin tipis',
       badge: 'Perlu kontrol',
-      description: `Untuk ${scope}, profit masih positif di ${formatRupiah(summary.netProfit)}, tetapi margin hanya ${formatPercentage(summary.profitMargin)} karena beban sudah mencapai ${formatPercentage(summary.expenseRatio)} dari income. Fokus kontrol biaya sebelum margin turun lebih jauh.${expenseText}${branchText}${pendingText}`,
+      description: `Untuk ${scope}, profit masih positif di ${formatRupiah(summary.netProfit)}, tetapi margin hanya ${formatPercentage(summary.profitMargin)} karena beban sudah mencapai ${formatPercentage(summary.expenseRatio)} dari income. Fokus kontrol biaya sebelum margin turun lebih jauh.${cogsText}${expenseText}${branchText}${pendingText}`,
       tone: 'warning',
       points: [
         { label: 'Income', value: formatRupiah(summary.grossIncome) },
         { label: 'Beban', value: formatRupiah(summary.expense) },
         { label: 'Margin', value: formatPercentage(summary.profitMargin) },
-        { label: 'Net Cashflow', value: formatRupiah(summary.netCashflow) },
+        hppPoint,
       ],
     }
   }, [branchMetrics, branches, expenseCategories, filterBranch, summary])
@@ -1000,8 +1068,13 @@ export default function CashflowAnalysisPage() {
       'Periode Akhir': formatDate(endDate, 'dd/MM/yyyy'),
       Cabang: filterBranch ? branches.find((branch) => branch.id === filterBranch)?.name || '' : 'Semua Cabang',
       'Revenue': summary.revenue,
+      'HPP (Bahan Baku)': summary.cogs,
+      'Rasio HPP (%)': summary.cogsRatio.toFixed(2),
+      'Laba Kotor': summary.grossProfit,
+      'Margin Kotor (%)': summary.grossMargin.toFixed(2),
       'Pendapatan Lain': summary.otherIncome,
       'Income Total': summary.grossIncome,
+      'Beban Operasional': summary.operatingExpense,
       'Beban': summary.expense,
       'Profit Bersih': summary.netProfit,
       'Margin Profit (%)': summary.profitMargin.toFixed(2),
@@ -1014,8 +1087,13 @@ export default function CashflowAnalysisPage() {
     const branchRows = branchMetrics.map((branch) => ({
       Cabang: branch.branchName,
       'Revenue': branch.revenue,
+      'HPP (Bahan Baku)': branch.cogs,
+      'Rasio HPP (%)': branch.revenue > 0 ? branch.cogsRatio.toFixed(2) : '',
+      'Laba Kotor': branch.grossProfit,
+      'Margin Kotor (%)': branch.revenue > 0 ? branch.grossMargin.toFixed(2) : '',
       'Pendapatan Lain': branch.otherIncome,
       'Income Total': branch.grossIncome,
+      'Beban Operasional': branch.operatingExpense,
       Beban: branch.expense,
       'Profit Bersih': branch.netProfit,
       'Margin Profit (%)': branch.profitMargin.toFixed(2),
@@ -1154,6 +1232,30 @@ export default function CashflowAnalysisPage() {
             />
           </div>
 
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <MetricCard
+              title="HPP (Bahan Baku)"
+              value={formatRupiah(summary.cogs)}
+              subtitle={`${formatPercentage(summary.cogsRatio)} dari revenue`}
+              icon={<ShoppingBag className="h-5 w-5" />}
+              tone={summary.cogsRatio > 40 ? 'red' : summary.cogsRatio > 30 ? 'amber' : 'green'}
+            />
+            <MetricCard
+              title="Laba Kotor"
+              value={formatRupiah(summary.grossProfit)}
+              subtitle={`Margin kotor ${formatPercentage(summary.grossMargin)}`}
+              icon={<Scale className="h-5 w-5" />}
+              tone={summary.grossProfit >= 0 ? 'blue' : 'red'}
+            />
+            <MetricCard
+              title="Beban Operasional"
+              value={formatRupiah(summary.operatingExpense)}
+              subtitle={`${formatPercentage(summary.opexRatio)} dari income, di luar HPP`}
+              icon={<ArrowDownRight className="h-5 w-5" />}
+              tone="amber"
+            />
+          </div>
+
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <MetricCard
               title="Cash In Periode"
@@ -1262,28 +1364,60 @@ export default function CashflowAnalysisPage() {
             </div>
           </section>
 
-          {branchChartData.length > 0 && (
-            <section className="card p-4">
-              <div className="mb-4">
-                <h3 className="text-base font-bold text-slate-950">Profit Bersih per Cabang</h3>
-                <p className="text-xs text-slate-500">Diurutkan berdasarkan profit bersih periode filter.</p>
-              </div>
-              <ResponsiveContainer width="100%" height={Math.max(220, branchChartData.length * 44)}>
-                <BarChart data={branchChartData} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 74 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
-                  <XAxis type="number" tickFormatter={formatShortRupiah} tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} width={70} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    formatter={(value: number, name: string) => [formatRupiah(value), name]}
-                    contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 12 }}
-                  />
-                  <Bar dataKey="netProfit" name="Profit Bersih" radius={[0, 8, 8, 0]}>
-                    {branchChartData.map((branch, index) => (
-                      <Cell key={index} fill={branch.netProfit >= 0 ? '#2563EB' : '#DC2626'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+          {(branchChartData.length > 0 || cogsChartData.length > 0) && (
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {branchChartData.length > 0 && (
+                <div className="card p-4">
+                  <div className="mb-4">
+                    <h3 className="text-base font-bold text-slate-950">Profit Bersih per Cabang</h3>
+                    <p className="text-xs text-slate-500">Diurutkan berdasarkan profit bersih periode filter.</p>
+                  </div>
+                  <ResponsiveContainer width="100%" height={Math.max(220, branchChartData.length * 44)}>
+                    <BarChart data={branchChartData} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 74 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                      <XAxis type="number" tickFormatter={formatShortRupiah} tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} width={70} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        formatter={(value: number, name: string) => [formatRupiah(value), name]}
+                        contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 12 }}
+                      />
+                      <Bar dataKey="netProfit" name="Profit Bersih" radius={[0, 8, 8, 0]}>
+                        {branchChartData.map((branch, index) => (
+                          <Cell key={index} fill={branch.netProfit >= 0 ? '#2563EB' : '#DC2626'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {cogsChartData.length > 0 && (
+                <div className="card p-4">
+                  <div className="mb-4">
+                    <h3 className="text-base font-bold text-slate-950">Rasio HPP per Cabang</h3>
+                    <p className="text-xs text-slate-500">Bahan baku dibagi revenue cabang — makin tinggi, makin boros.</p>
+                  </div>
+                  <ResponsiveContainer width="100%" height={Math.max(220, cogsChartData.length * 44)}>
+                    <BarChart data={cogsChartData} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 74 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                      <XAxis type="number" tickFormatter={(v) => `${v.toFixed(0)}%`} tick={{ fontSize: 11, fill: '#64748B' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} width={70} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        formatter={(value: number, name: string, item) => [
+                          `${formatPercentage(value)} (${formatRupiah(item.payload.cogs)})`,
+                          name,
+                        ]}
+                        contentStyle={{ borderRadius: 12, border: '1px solid #E2E8F0', fontSize: 12 }}
+                      />
+                      <Bar dataKey="cogsRatio" name="Rasio HPP" radius={[0, 8, 8, 0]}>
+                        {cogsChartData.map((branch, index) => (
+                          <Cell key={index} fill={branch.cogsRatio > 40 ? '#DC2626' : branch.cogsRatio > 30 ? '#D97706' : '#16A34A'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
             </section>
           )}
 
@@ -1298,11 +1432,13 @@ export default function CashflowAnalysisPage() {
             ) : (
               <>
                 <div className="hidden overflow-x-auto lg:block">
-                  <table className="w-full min-w-[1120px] table-auto">
+                  <table className="w-full min-w-[1260px] table-auto">
                     <thead>
                       <tr>
-                        <th className="table-header w-[16%]">Cabang</th>
+                        <th className="table-header w-[14%]">Cabang</th>
                         <th className="table-header text-right">Revenue</th>
+                        <th className="table-header text-right">HPP</th>
+                        <th className="table-header text-right">Rasio HPP</th>
                         <th className="table-header text-right">Income Lain</th>
                         <th className="table-header text-right">Beban</th>
                         <th className="table-header text-right">Profit</th>
@@ -1316,6 +1452,13 @@ export default function CashflowAnalysisPage() {
                         <tr key={branch.branchId} className="hover:bg-slate-50">
                           <td className="table-cell font-semibold"><div className="truncate">{branch.branchName}</div></td>
                           <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(branch.revenue)}</td>
+                          <td className="table-cell text-right font-medium text-amber-600 text-rupiah">{formatRupiah(branch.cogs)}</td>
+                          <td className={cn(
+                            'table-cell text-right font-semibold',
+                            branch.cogsRatio > 40 ? 'text-red-600' : branch.cogsRatio > 30 ? 'text-amber-600' : 'text-emerald-600'
+                          )}>
+                            {branch.revenue > 0 ? formatPercentage(branch.cogsRatio) : '-'}
+                          </td>
                           <td className="table-cell text-right font-medium text-rupiah">{formatRupiah(branch.otherIncome)}</td>
                           <td className="table-cell text-right font-medium text-red-600 text-rupiah">{formatRupiah(branch.expense)}</td>
                           <td className={cn('table-cell text-right font-bold text-rupiah', branch.netProfit >= 0 ? 'text-blue-600' : 'text-red-600')}>
@@ -1356,14 +1499,23 @@ export default function CashflowAnalysisPage() {
                           <p className="overflow-x-auto whitespace-nowrap font-semibold text-rupiah scrollbar-thin">{formatRupiah(branch.revenue)}</p>
                         </div>
                         <div className="text-right">
+                          <p className="text-xs text-slate-500">HPP (Rasio)</p>
+                          <p className={cn(
+                            'overflow-x-auto whitespace-nowrap font-semibold text-rupiah scrollbar-thin',
+                            branch.cogsRatio > 40 ? 'text-red-600' : branch.cogsRatio > 30 ? 'text-amber-600' : 'text-emerald-600'
+                          )}>
+                            {formatRupiah(branch.cogs)} ({branch.revenue > 0 ? formatPercentage(branch.cogsRatio) : '-'})
+                          </p>
+                        </div>
+                        <div>
                           <p className="text-xs text-slate-500">Beban</p>
                           <p className="overflow-x-auto whitespace-nowrap font-semibold text-red-600 text-rupiah scrollbar-thin">{formatRupiah(branch.expense)}</p>
                         </div>
-                        <div>
+                        <div className="text-right">
                           <p className="text-xs text-slate-500">Rasio Beban</p>
                           <p className="font-semibold">{formatPercentage(branch.expenseRatio)}</p>
                         </div>
-                        <div className="text-right">
+                        <div>
                           <p className="text-xs text-slate-500">Posisi Kas</p>
                           <p className="overflow-x-auto whitespace-nowrap font-semibold text-rupiah scrollbar-thin">{formatRupiah(branch.cashPosition)}</p>
                         </div>
