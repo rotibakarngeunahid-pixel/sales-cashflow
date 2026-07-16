@@ -19,12 +19,13 @@ import { createClient } from '@/lib/supabase/client'
 import type { Branch, CashflowCategory } from '@/types/database'
 import type { KasirImportLog } from '@/types/database'
 import type { CombinedImportResult, CombinedPreviewResult, ExpenseItemDetail } from '@/lib/kasir-import/shared'
-import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
+import { SelectFilter } from '@/components/ui/FilterBar'
+import { ImportDateRangeFilter } from '@/components/ui/ImportDatePicker'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingSpinner, PageLoading } from '@/components/ui/LoadingSpinner'
 import { cn, formatDate, formatDateTime, formatRupiah, toDateInputValue } from '@/lib/utils/format'
 import { invalidateCachedData } from '@/lib/utils/client-cache'
-import { checkDateAlreadyImported } from '@/lib/utils/import-date-status'
+import { checkDateAlreadyImported, getImportedDatesInMonth } from '@/lib/utils/import-date-status'
 
 const KASIR_IMPORT_KEY_PREFIXES = ['kasir-sales:', 'kasir-expenses:']
 
@@ -907,6 +908,17 @@ export default function KasirImportPage() {
 
   useEffect(() => { loadLogs() }, [loadLogs])
 
+  // Ambil tanggal-tanggal yang sudah pernah diimport dalam satu bulan, untuk
+  // menonaktifkan (abu-abu, tidak bisa diklik) tanggal tersebut di kalender.
+  const fetchDisabledDatesForCalendar = useCallback(async (monthDate: Date) => {
+    const supabase = createClient()
+    return getImportedDatesInMonth(supabase, {
+      monthDate,
+      branchId: branchId || undefined,
+      importKeyPrefixes: KASIR_IMPORT_KEY_PREFIXES,
+    })
+  }, [branchId])
+
   // ----- Cek status import untuk tanggal yang dipilih -----
   // Hanya berlaku saat memilih satu tanggal (startDate === endDate); untuk rentang
   // tanggal, status per-hari tidak ditampilkan karena tombol mewakili seluruh rentang.
@@ -1135,11 +1147,13 @@ export default function KasirImportPage() {
               <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">
                 Periode Tanggal
               </label>
-              <DateRangeFilter
+              <ImportDateRangeFilter
                 startDate={startDate}
                 endDate={endDate}
                 onStartChange={(v) => handleFilterChange(setStartDate, v)}
                 onEndChange={(v)   => handleFilterChange(setEndDate, v)}
+                fetchDisabledDates={fetchDisabledDatesForCalendar}
+                disabledTooltip="Tanggal ini sudah pernah diimport"
               />
             </div>
             <div>
