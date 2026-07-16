@@ -33,6 +33,7 @@ import {
   type CombinedPreviewResult,
   type SaleBranchDetail,
   type ExpenseItemDetail,
+  type KasirCategoryMappingRule,
 } from './shared'
 
 type Supabase = SupabaseClient<Database>
@@ -354,16 +355,71 @@ async function loadLocalCategories(supabase: Supabase): Promise<LocalCategory[]>
   return data || []
 }
 
-function matchCategory(kasirCategoryName: string, categories: LocalCategory[], type: 'cash_in' | 'cash_out'): string | null {
+async function loadCategoryMappings(supabase: Supabase): Promise<KasirCategoryMappingRule[]> {
+  const { data } = await supabase
+    .from('kasir_category_mappings')
+    .select('id,kasir_category,match_type,local_category_id')
+    // Rule yang paling baru diedit menang kalau ada beberapa rule yang tumpang tindih.
+    .order('updated_at', { ascending: false })
+
+  return (data || []).map((row) => ({
+    id: row.id,
+    kasirCategory: row.kasir_category,
+    matchType: row.match_type,
+    localCategoryId: row.local_category_id,
+  }))
+}
+
+interface CategoryMatchResult {
+  categoryId: string | null
+  categoryName: string | null
+  matchedByRule: boolean
+}
+
+// Resolusi kategori kas keluar dari kasir ke kategori cashflow lokal.
+// Prioritas: (1) pemetaan manual tersimpan (exact lalu contains — lihat
+// kasir_category_mappings, dikelola lewat halaman Pemetaan Kategori POS),
+// (2) heuristik generik: cocokkan teks kasir terhadap NAMA kategori lokal.
+// Rule manual HANYA dipakai kalau kategori tujuannya masih aktif & sesuai tipe
+// (cash_out/both) — kalau kategori tujuan dinonaktifkan, rule diabaikan dan
+// jatuh ke heuristik generik, bukan error.
+function matchCategory(
+  kasirCategoryName: string,
+  categories: LocalCategory[],
+  type: 'cash_in' | 'cash_out',
+  mappingRules: KasirCategoryMappingRule[] = []
+): CategoryMatchResult {
   const normalized = normalizeBranchName(kasirCategoryName)
   const typed = categories.filter((c) => c.default_type === type || c.default_type === 'both')
+  const categoryById = new Map(typed.map((c) => [c.id, c]))
+
+  if (!normalized) return { categoryId: null, categoryName: null, matchedByRule: false }
+
+  const exactRule = mappingRules.find((rule) => {
+    if (rule.matchType !== 'exact' || !categoryById.has(rule.localCategoryId)) return false
+    return normalizeBranchName(rule.kasirCategory) === normalized
+  })
+  if (exactRule) {
+    return { categoryId: exactRule.localCategoryId, categoryName: categoryById.get(exactRule.localCategoryId)!.name, matchedByRule: true }
+  }
+
+  const containsRule = mappingRules.find((rule) => {
+    if (rule.matchType !== 'contains' || !categoryById.has(rule.localCategoryId)) return false
+    const pattern = normalizeBranchName(rule.kasirCategory)
+    return pattern !== '' && normalized.includes(pattern)
+  })
+  if (containsRule) {
+    return { categoryId: containsRule.localCategoryId, categoryName: categoryById.get(containsRule.localCategoryId)!.name, matchedByRule: true }
+  }
+
   const exact = typed.find((c) => normalizeBranchName(c.name) === normalized)
-  if (exact) return exact.id
+  if (exact) return { categoryId: exact.id, categoryName: exact.name, matchedByRule: false }
+
   const partial = typed.find(
     (c) => normalized.includes(normalizeBranchName(c.name)) ||
            normalizeBranchName(c.name).includes(normalized)
   )
-  return partial?.id ?? null
+  return { categoryId: partial?.id ?? null, categoryName: partial?.name ?? null, matchedByRule: false }
 }
 
 function findKurirBawaBahanCategoryId(categories: LocalCategory[]): string | null {
@@ -752,7 +808,7 @@ export async function getExpensesPreview(
 ): Promise<KasirExpensePreviewPayload> {
   validateDateRange(params.startDate, params.endDate)
 
-  const [rawData, branches, categories, mappings] = await Promise.all([
+  const [rawData, branches, categories, mappings, categoryMappingRules] = await Promise.all([
     callKasirRpc('get_kas_keluar_integration', {
       p_date_from: params.startDate,
       p_date_to:   params.endDate,
@@ -760,6 +816,7 @@ export async function getExpensesPreview(
     loadLocalBranches(supabase),
     loadLocalCategories(supabase),
     loadKasirMappings(supabase),
+    loadCategoryMappings(supabase),
   ])
 
   if (rawData.length === 0) {
@@ -812,9 +869,17 @@ export async function getExpensesPreview(
     const importKey       = makeExpenseImportKey(item.branchName, item.expenseId)
     const matchedBranch   = matchBranch(item.branchName, branches, mappings)
     const isAutoSplitKurirBawaBahan = isKurirBawaBahanCategory(item.category)
-    const localCategoryId = isAutoSplitKurirBawaBahan
-      ? findKurirBawaBahanCategoryId(categories)
-      : matchCategory(item.category || item.expenseName, categories, 'cash_out')
+    const kurirBawaBahanCategoryId  = isAutoSplitKurirBawaBahan ? findKurirBawaBahanCategoryId(categories) : null
+    const categoryMatch = isAutoSplitKurirBawaBahan
+      ? {
+          categoryId:    kurirBawaBahanCategoryId,
+          categoryName:  categories.find((c) => c.id === kurirBawaBahanCategoryId)?.name ?? null,
+          matchedByRule: false,
+        }
+      : matchCategory(item.category || item.expenseName, categories, 'cash_out', categoryMappingRules)
+    const localCategoryId       = categoryMatch.categoryId
+    const localCategoryName     = categoryMatch.categoryName
+    const categoryMatchedByRule = categoryMatch.matchedByRule
     const isDuplicate     = existingKeys.has(importKey) || splitImportedIds.has(item.expenseId)
 
     let status: KasirExpensePreviewItem['status']
@@ -864,6 +929,8 @@ export async function getExpensesPreview(
       expenseName:   item.expenseName,
       category:      item.category,
       localCategoryId,
+      localCategoryName,
+      categoryMatchedByRule,
       amount:        item.amount,
       notes:         item.notes,
       recordedBy:    item.recordedBy,
@@ -1217,6 +1284,9 @@ export async function importCombined(
         expenseName:  item.expenseName,
         branchName:   item.branchName,
         category:     item.category,
+        localCategoryId:       item.localCategoryId,
+        localCategoryName:     item.localCategoryName,
+        categoryMatchedByRule: item.categoryMatchedByRule,
         amount:       item.amount,
         dateWITA:     item.dateWITA,
         recordedBy:   item.recordedBy,
@@ -1388,6 +1458,9 @@ export async function previewCombined(
         expenseName:  item.expenseName,
         branchName:   item.branchName,
         category:     item.category,
+        localCategoryId:       item.localCategoryId,
+        localCategoryName:     item.localCategoryName,
+        categoryMatchedByRule: item.categoryMatchedByRule,
         amount:       item.amount,
         dateWITA:     item.dateWITA,
         recordedBy:   item.recordedBy,

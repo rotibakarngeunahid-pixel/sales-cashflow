@@ -22,6 +22,7 @@ export type OnlineSalesStatus = 'draft' | 'posted' | 'void'
 export type OnlineSalesNettInputMode = 'calculated' | 'manual'
 export type OnlineSalesDeductionType = 'commission' | 'promo' | 'other'
 export type OnlineSalesDetectionSource = 'kasir_import' | 'kasir_sync'
+export type CategoryMappingMatchType = 'exact' | 'contains'
 
 export interface Profile {
   id: string
@@ -167,6 +168,17 @@ export interface KasirImportLog {
   created_by: string | null
   created_at: string
   actor?: Pick<Profile, 'full_name' | 'email'> | null
+}
+
+export interface KasirCategoryMapping {
+  id: string
+  kasir_category: string
+  match_type: CategoryMappingMatchType
+  local_category_id: string
+  local_category?: Pick<CashflowCategory, 'id' | 'name' | 'default_type'> | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface AuditLog {
@@ -1212,6 +1224,39 @@ export interface Database {
             columns: ['branch_id']
             isOneToOne: false
             referencedRelation: 'branches'
+            referencedColumns: ['id']
+          }
+        ]
+      }
+      kasir_category_mappings: {
+        Row: {
+          id: string
+          kasir_category: string
+          match_type: CategoryMappingMatchType
+          local_category_id: string
+          created_by: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          kasir_category: string
+          match_type?: CategoryMappingMatchType
+          local_category_id: string
+          created_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          kasir_category?: string
+          match_type?: CategoryMappingMatchType
+          local_category_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'kasir_category_mappings_local_category_id_fkey'
+            columns: ['local_category_id']
+            isOneToOne: false
+            referencedRelation: 'cashflow_categories'
             referencedColumns: ['id']
           }
         ]

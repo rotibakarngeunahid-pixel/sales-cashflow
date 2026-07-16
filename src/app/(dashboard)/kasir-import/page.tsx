@@ -9,15 +9,16 @@ import {
   Info,
   RefreshCw,
   RotateCcw,
+  Settings2,
   ShoppingCart,
   Trash2,
   TrendingDown,
   XCircle,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import type { Branch } from '@/types/database'
+import type { Branch, CashflowCategory } from '@/types/database'
 import type { KasirImportLog } from '@/types/database'
-import type { CombinedImportResult, CombinedPreviewResult } from '@/lib/kasir-import/shared'
+import type { CombinedImportResult, CombinedPreviewResult, ExpenseItemDetail } from '@/lib/kasir-import/shared'
 import { DateRangeFilter, SelectFilter } from '@/components/ui/FilterBar'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingSpinner, PageLoading } from '@/components/ui/LoadingSpinner'
@@ -86,6 +87,37 @@ function ImportTypeLabel({ type }: { type: KasirImportLog['import_type'] }) {
   )
 }
 
+// Badge kategori kas keluar: menampilkan kategori LOKAL hasil resolusi (bukan
+// teks mentah dari kasir) supaya jelas ke mana transaksi ini akan tercatat.
+// Hijau = cocok lewat pemetaan manual tersimpan (bisa dipercaya), abu-abu =
+// cocok lewat heuristik nama kategori, amber = belum terpetakan sama sekali.
+function ExpenseCategoryBadge({ item }: { item: Pick<ExpenseItemDetail, 'category' | 'localCategoryName' | 'categoryMatchedByRule'> }) {
+  if (item.localCategoryName) {
+    return (
+      <div className="space-y-0.5">
+        <span
+          className={cn(
+            'inline-flex rounded-full px-2 py-0.5 text-xs font-semibold',
+            item.categoryMatchedByRule ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'
+          )}
+        >
+          {item.localCategoryName}
+        </span>
+        {item.category && item.category !== item.localCategoryName && (
+          <p className="text-[10px] text-slate-400 truncate max-w-[180px]" title={item.category}>{item.category}</p>
+        )}
+      </div>
+    )
+  }
+  return item.category
+    ? (
+      <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700" title="Belum ada kategori cashflow yang cocok — akan tersimpan tanpa kategori">
+        Belum terpetakan
+      </span>
+    )
+    : <span className="text-slate-300 text-xs">—</span>
+}
+
 // -----------------------------------------------
 // Panel preview (sebelum konfirmasi — data BELUM disimpan)
 // -----------------------------------------------
@@ -103,6 +135,12 @@ function CombinedPreviewPanel({
   savingMappingKey,
   onSaveMapping,
   mappingSuccess,
+  categories,
+  pendingCategoryMappings,
+  onPendingCategoryMappingChange,
+  savingCategoryMappingKey,
+  onSaveCategoryMapping,
+  categoryMappingSuccess,
 }: {
   data: CombinedPreviewResult
   startDate: string
@@ -116,6 +154,12 @@ function CombinedPreviewPanel({
   savingMappingKey: string | null
   onSaveMapping: (kasirName: string) => void
   mappingSuccess: string | null
+  categories: Pick<CashflowCategory, 'id' | 'name'>[]
+  pendingCategoryMappings: Record<string, string>
+  onPendingCategoryMappingChange: (kasirCategory: string, categoryId: string) => void
+  savingCategoryMappingKey: string | null
+  onSaveCategoryMapping: (kasirCategory: string) => void
+  categoryMappingSuccess: string | null
 }) {
   const activeExpenseItems = data.expenseItems.filter(
     (item) => !excludedExpenseKeys.has(item.importKey)
@@ -297,6 +341,76 @@ function CombinedPreviewPanel({
         )
       })()}
 
+      {/* Panel mapping: kategori kas keluar kasir yang belum terpetakan ke kategori lokal */}
+      {(() => {
+        const unmapped = new Map<string, number>()
+        for (const item of data.expenseItems) {
+          if (item.localCategoryId || !item.category) continue
+          unmapped.set(item.category, (unmapped.get(item.category) ?? 0) + 1)
+        }
+        if (unmapped.size === 0) return null
+        const entries = Array.from(unmapped.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-amber-800">
+                  Kategori kas keluar belum terpetakan — akan tersimpan tanpa kategori
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Teks kategori/keterangan dari sistem kasir berikut tidak cocok dengan kategori cashflow manapun.
+                  Pilih kategori yang sesuai lalu klik <strong>Simpan Pemetaan</strong>.
+                  Pemetaan tersimpan permanen dan akan dipakai otomatis di import berikutnya untuk teks yang sama persis.
+                </p>
+              </div>
+            </div>
+            {categoryMappingSuccess && (
+              <div className="ml-6 flex items-center gap-1.5 text-xs text-emerald-700 font-semibold">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {categoryMappingSuccess}
+              </div>
+            )}
+            <div className="ml-6 space-y-2">
+              {entries.map(([kasirCategory, count]) => (
+                <div key={kasirCategory} className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="text-xs font-mono bg-amber-100 border border-amber-200 rounded px-2 py-1 text-amber-900 min-w-0 shrink-0 truncate max-w-[260px]" title={kasirCategory}>
+                    {kasirCategory}
+                    {count > 1 && <span className="text-amber-500"> ×{count}</span>}
+                  </span>
+                  <span className="text-xs text-amber-600 shrink-0">→</span>
+                  <select
+                    className="flex-1 rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    value={pendingCategoryMappings[kasirCategory] ?? ''}
+                    onChange={(e) => onPendingCategoryMappingChange(kasirCategory, e.target.value)}
+                  >
+                    <option value="">Pilih kategori cashflow...</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={!pendingCategoryMappings[kasirCategory] || savingCategoryMappingKey === kasirCategory}
+                    onClick={() => onSaveCategoryMapping(kasirCategory)}
+                    className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40 hover:bg-amber-700 transition-colors"
+                  >
+                    {savingCategoryMappingKey === kasirCategory ? 'Menyimpan...' : 'Simpan Pemetaan'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="ml-6 text-[11px] text-amber-600">
+              Butuh aturan yang lebih fleksibel (mis. kategori berdasarkan kata kunci)?{' '}
+              <a href="/kasir-import/category-mapping" className="underline decoration-dotted underline-offset-2 hover:text-amber-900">
+                Kelola Pemetaan Kategori
+              </a>
+            </p>
+          </div>
+        )
+      })()}
+
       {/* Tabel detail penjualan per cabang */}
       {data.salesByBranch.length > 0 && (
         <div className="card overflow-hidden">
@@ -358,6 +472,12 @@ function CombinedPreviewPanel({
               <h4 className="text-sm font-bold text-slate-950">Rincian Kas Keluar</h4>
               <span className="text-xs text-slate-400">Klik ikon hapus untuk tidak memasukkan transaksi ke catatan</span>
             </div>
+            <a
+              href="/kasir-import/category-mapping"
+              className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors shrink-0"
+            >
+              <Settings2 className="h-3.5 w-3.5" /> Kelola Pemetaan Kategori
+            </a>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[540px]">
@@ -389,9 +509,7 @@ function CombinedPreviewPanel({
                       </td>
                       <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
                       <td className="px-4 py-2.5">
-                        {item.category
-                          ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
-                          : <span className="text-slate-300 text-xs">—</span>}
+                        <ExpenseCategoryBadge item={item} />
                       </td>
                       <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
                       <td className={cn('px-4 py-2.5 text-right font-bold', isExcluded ? 'text-slate-300 line-through' : 'text-red-600')}>
@@ -668,9 +786,7 @@ function CombinedResultPanel({ result }: { result: CombinedImportResult }) {
                     </td>
                     <td className="px-4 py-2.5 text-sm text-slate-700">{item.branchName}</td>
                     <td className="px-4 py-2.5">
-                      {item.category
-                        ? <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{item.category}</span>
-                        : <span className="text-slate-300 text-xs">—</span>}
+                      <ExpenseCategoryBadge item={item} />
                     </td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{item.recordedBy}</td>
                     <td className="px-4 py-2.5 text-right font-bold text-red-600">{formatRupiah(item.amount)}</td>
@@ -729,6 +845,7 @@ export default function KasirImportPage() {
   const [endDate,   setEndDate]   = useState(today)
   const [branchId,  setBranchId]  = useState('')
   const [branches,  setBranches]  = useState<Pick<Branch, 'id' | 'name'>[]>([])
+  const [categories, setCategories] = useState<Pick<CashflowCategory, 'id' | 'name'>[]>([])
 
   const [pageState,            setPageState]            = useState<PageState>('form')
   const [error,                setError]                = useState<string | null>(null)
@@ -739,6 +856,10 @@ export default function KasirImportPage() {
   const [pendingMappings,   setPendingMappings]   = useState<Record<string, string>>({})
   const [savingMappingKey,  setSavingMappingKey]  = useState<string | null>(null)
   const [mappingSuccess,    setMappingSuccess]    = useState<string | null>(null)
+
+  const [pendingCategoryMappings,  setPendingCategoryMappings]  = useState<Record<string, string>>({})
+  const [savingCategoryMappingKey, setSavingCategoryMappingKey] = useState<string | null>(null)
+  const [categoryMappingSuccess,   setCategoryMappingSuccess]   = useState<string | null>(null)
 
   const [logs,        setLogs]        = useState<KasirImportLog[]>([])
   const [logsLoading, setLogsLoading] = useState(true)
@@ -757,6 +878,18 @@ export default function KasirImportPage() {
       .is('deleted_at', null)
       .order('name')
       .then(({ data }) => setBranches(data || []))
+  }, [])
+
+  // Load kategori cashflow (cash_out & both) untuk panel pemetaan kategori kas keluar
+  useEffect(() => {
+    createClient()
+      .from('cashflow_categories')
+      .select('id,name')
+      .in('default_type', ['cash_out', 'both'])
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .order('name')
+      .then(({ data }) => setCategories(data || []))
   }, [])
 
   // Load logs
@@ -825,6 +958,31 @@ export default function KasirImportPage() {
       await handlePreview()
     } finally {
       setSavingMappingKey(null)
+    }
+  }
+
+  // ----- Mapping kategori kas keluar kasir -----
+  async function handleSaveCategoryMapping(kasirCategory: string) {
+    const localCategoryId = pendingCategoryMappings[kasirCategory]
+    if (!localCategoryId) return
+    setSavingCategoryMappingKey(kasirCategory)
+    setCategoryMappingSuccess(null)
+    try {
+      const res = await fetch('/api/kasir-import/map-category', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kasir_category: kasirCategory, match_type: 'exact', local_category_id: localCategoryId }),
+      })
+      const json = await res.json() as { success: boolean; message?: string }
+      if (!res.ok || !json.success) {
+        setError(json.message || 'Gagal menyimpan pemetaan kategori.')
+        return
+      }
+      setPendingCategoryMappings((prev) => { const next = { ...prev }; delete next[kasirCategory]; return next })
+      setCategoryMappingSuccess(`Pemetaan "${kasirCategory}" disimpan. Menarik ulang data...`)
+      await handlePreview()
+    } finally {
+      setSavingCategoryMappingKey(null)
     }
   }
 
@@ -1083,6 +1241,14 @@ export default function KasirImportPage() {
             savingMappingKey={savingMappingKey}
             onSaveMapping={handleSaveMapping}
             mappingSuccess={mappingSuccess}
+            categories={categories}
+            pendingCategoryMappings={pendingCategoryMappings}
+            onPendingCategoryMappingChange={(kasirCategory, categoryId) =>
+              setPendingCategoryMappings((prev) => ({ ...prev, [kasirCategory]: categoryId }))
+            }
+            savingCategoryMappingKey={savingCategoryMappingKey}
+            onSaveCategoryMapping={handleSaveCategoryMapping}
+            categoryMappingSuccess={categoryMappingSuccess}
           />
 
           {/* Action buttons */}

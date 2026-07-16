@@ -142,6 +142,8 @@ export interface KasirExpensePreviewItem {
   expenseName: string
   category: string               // kategori dari kasir
   localCategoryId: string | null // UUID kategori di sistem keuangan
+  localCategoryName: string | null   // nama kategori lokal yang cocok (untuk ditampilkan)
+  categoryMatchedByRule: boolean     // true jika cocok lewat pemetaan manual tersimpan
   amount: number
   notes: string
   recordedBy: string
@@ -216,6 +218,9 @@ export interface ExpenseItemDetail {
   expenseName:  string
   branchName:   string
   category:     string
+  localCategoryId?:   string | null  // UUID kategori cashflow lokal yang cocok
+  localCategoryName?: string | null  // nama kategori lokal yang cocok (untuk ditampilkan)
+  categoryMatchedByRule?: boolean    // true jika cocok lewat pemetaan manual tersimpan
   amount:       number
   dateWITA:     string
   recordedBy:   string
@@ -308,6 +313,27 @@ export function normalizeBranchName(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
     .trim()
+}
+
+// Alias semantik untuk normalisasi teks pemetaan (kategori kas keluar, dll).
+// Sengaja reuse normalizeBranchName — logika normalisasinya (lowercase, tanpa
+// aksen, tanpa tanda baca) sudah tepat untuk perbandingan teks toleran-typo.
+export const normalizeMatchText = normalizeBranchName
+
+// ----- Category mapping (kategori kas keluar kasir -> kategori cashflow lokal) -----
+
+export type CategoryMappingMatchType = 'exact' | 'contains'
+
+export const CATEGORY_MAPPING_MATCH_TYPE_LABELS: Record<CategoryMappingMatchType, string> = {
+  exact: 'Persis sama',
+  contains: 'Mengandung kata/frasa',
+}
+
+export interface KasirCategoryMappingRule {
+  id: string
+  kasirCategory: string
+  matchType: CategoryMappingMatchType
+  localCategoryId: string
 }
 
 export function makeSaleImportKey(branchName: string, transactionId: string): string {

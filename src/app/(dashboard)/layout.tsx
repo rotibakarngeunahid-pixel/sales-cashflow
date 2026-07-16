@@ -24,6 +24,7 @@ const pageTitles: Record<string, string> = {
   '/cashflow/proyeksi': 'Proyeksi Laba Rugi',
   '/cashflow/categories': 'Kategori Cashflow',
   '/kasir-import': 'Import dari POS',
+  '/kasir-import/category-mapping': 'Pemetaan Kategori POS',
   '/kasir-sync': 'Sinkronisasi Kasir',
   '/kasir-sync/review': 'Tinjau Antrian Kasir',
   '/branches': 'Manajemen Cabang',

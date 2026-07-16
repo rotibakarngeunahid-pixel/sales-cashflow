@@ -10,6 +10,7 @@ import {
   BarChart3,
   LineChart,
   Tag,
+  Tags,
   Building2,
   Users,
   ClipboardList,
@@ -54,6 +55,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { href: '/cashflow', label: 'Cashflow', icon: Wallet },
       { href: '/kasir-import', label: 'Import dari POS', icon: Store },
+      { href: '/kasir-import/category-mapping', label: 'Pemetaan Kategori POS', icon: Tags },
       { href: '/cashflow/import-bahan-baku', label: 'Import Bahan Baku', icon: Package },
       { href: '/cashflow/import-food-waste', label: 'Import Food Waste', icon: Trash2 },
       { href: '/cashflow/transfer-beban', label: 'Transfer Beban Pokok', icon: ArrowLeftRight },
