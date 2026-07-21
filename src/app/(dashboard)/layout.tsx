@@ -12,7 +12,6 @@ import { getOrFetchCached } from '@/lib/utils/client-cache'
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/sales/input': 'Input Penjualan',
-  '/sales/online': 'Penjualan Online',
   '/sales/import': 'Import Penjualan',
   '/sales/reports': 'Laporan Penjualan',
   '/sales/analysis': 'Analisa Sales',
@@ -40,7 +39,6 @@ type ReportStatus = 'none' | 'draft' | 'done' | null
 const prefetchPaths = [
   '/dashboard',
   '/sales/input',
-  '/sales/online',
   '/sales/reports',
   '/sales/analysis',
   '/cashflow',

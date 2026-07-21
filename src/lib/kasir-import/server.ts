@@ -13,13 +13,10 @@ import {
   isKurirBawaBahanCategory,
   makeSaleImportKey,
   makeExpenseImportKey,
-  makeOnlineSaleImportKey,
-  detectOnlinePlatform,
   distributeSplitAmounts,
   validateMappingTargets,
   STATUS_LABELS,
   type PaymentMethodFilter,
-  type OnlinePlatform,
   type KasirSalePreviewItem,
   type KasirSalePreviewSummary,
   type KasirSalePreviewPayload,
@@ -466,17 +463,6 @@ async function loadExistingImportKeys(supabase: Supabase, keys: string[]): Promi
   return new Set((data || []).map((r) => r.import_key || ''))
 }
 
-async function loadExistingDetectionKeys(supabase: Supabase, keys: string[]): Promise<Set<string>> {
-  if (keys.length === 0) return new Set()
-
-  const { data } = await supabase
-    .from('online_sales_detections')
-    .select('import_key')
-    .in('import_key', keys)
-
-  return new Set((data || []).map((r) => r.import_key))
-}
-
 /**
  * Deteksi expense yang sudah pernah diimport sebagai SPLIT ke beberapa cabang.
  * Split memakai import_key berbentuk `...:{expenseId}:split:{branchId}`, sehingga
@@ -563,24 +549,16 @@ export async function getSalesPreview(
   }
 
   const importKeyOf = (item: NormalizedSale) =>
-    item.platform
-      ? makeOnlineSaleImportKey(item.platform, item.branchName, item.transactionId)
-      : makeSaleImportKey(item.branchName, item.transactionId)
+    makeSaleImportKey(item.branchName, item.transactionId)
 
-  const cashflowImportKeys  = branchFiltered.filter((i) => !i.platform).map(importKeyOf)
-  const detectionImportKeys = branchFiltered.filter((i) => i.platform).map(importKeyOf)
+  const cashflowImportKeys = branchFiltered.map(importKeyOf)
 
-  const [existingKeys, existingDetectionKeys] = await Promise.all([
-    loadExistingImportKeys(supabase, cashflowImportKeys),
-    loadExistingDetectionKeys(supabase, detectionImportKeys),
-  ])
+  const existingKeys = await loadExistingImportKeys(supabase, cashflowImportKeys)
 
   const items: KasirSalePreviewItem[] = branchFiltered.map((item) => {
     const importKey     = importKeyOf(item)
     const matchedBranch = matchBranch(item.branchName, branches, mappings)
-    const isDuplicate   = item.platform
-      ? existingDetectionKeys.has(importKey)
-      : existingKeys.has(importKey)
+    const isDuplicate   = existingKeys.has(importKey)
 
     let status: KasirSalePreviewItem['status']
     if (!matchedBranch) {
@@ -601,7 +579,6 @@ export async function getSalesPreview(
       branchId:        matchedBranch?.id ?? null,
       paymentMethod:   item.paymentMethod,
       paymentCategory: item.paymentCategory,
-      platform:        item.platform,
       amount:          item.amount,
       cashier:         item.cashier,
       status,
@@ -645,49 +622,10 @@ export async function importSales(
   let totalFailed  = 0
   let totalAmount  = 0
   let totalDupSkipped = 0
-  let onlineDetectedCount  = 0
-  let onlineDetectedAmount = 0
   const errors: string[] = []
 
   for (const item of newItems) {
-    if (!item.branchId) continue
-
-    if (item.platform) {
-      const { error } = await supabase
-        .from('online_sales_detections')
-        .insert({
-          transaction_date:     item.dateWITA,
-          branch_id:            item.branchId,
-          branch_name_raw:      item.branchName,
-          platform:             item.platform,
-          kasir_transaction_id: item.transactionId,
-          time_wita:            item.timeWITA,
-          detected_nett_amount: item.amount,
-          import_key:           item.importKey,
-          source:               'kasir_import',
-          raw_data: {
-            payment_method: item.paymentMethod,
-            cashier:        item.cashier,
-            datetime_raw:   item.datetimeRaw,
-          },
-        })
-
-      if (error) {
-        if (error.message.toLowerCase().includes('unique') || error.message.toLowerCase().includes('duplicate')) {
-          totalDupSkipped++
-          continue
-        }
-        totalFailed++
-        errors.push(`Gagal menampung transaksi online ${item.transactionId}: ${error.message}`)
-        continue
-      }
-
-      onlineDetectedCount++
-      onlineDetectedAmount += item.amount
-      continue
-    }
-
-    if (!item.paymentCategory) continue
+    if (!item.branchId || !item.paymentCategory) continue
 
     const categoryId  = await getSalesCategoryId(supabase, item.paymentCategory).catch(() => null)
     const description = `Penjualan ${item.paymentCategory} - ${item.branchName} - ${item.dateWITA} ${item.timeWITA} WITA`
@@ -757,10 +695,7 @@ export async function importSales(
   const totalSkipped =
     preview.items.filter((i) => i.status === 'duplicate' || i.status === 'skipped_payment' || i.status === 'branch_not_found').length + totalDupSkipped
 
-  const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'penjualan' }) +
-    (onlineDetectedCount > 0
-      ? ` ${onlineDetectedCount} transaksi online terdeteksi (${formatRupiahSimple(onlineDetectedAmount)}), menunggu dilengkapi di Penjualan Online.`
-      : '')
+  const message = buildImportMessage({ totalSuccess, totalFailed, totalSkipped, totalAmount, type: 'penjualan' })
 
   await writeKasirImportLog(supabase, {
     importType:          'sales',
@@ -779,7 +714,7 @@ export async function importSales(
   })
 
   return {
-    success:      totalFailed === 0 || totalSuccess > 0 || onlineDetectedCount > 0,
+    success:      totalFailed === 0 || totalSuccess > 0,
     totalFound:   preview.items.length,
     totalSuccess,
     totalFailed,
@@ -787,8 +722,6 @@ export async function importSales(
     totalAmount,
     message,
     errors,
-    onlineDetectedCount,
-    onlineDetectedAmount,
   }
 }
 
@@ -1347,8 +1280,6 @@ export async function importCombined(
     salesByBranch,
     expenseItems,
     expensesByBranch,
-    onlineDetectedCount:  salesResult.onlineDetectedCount ?? 0,
-    onlineDetectedAmount: salesResult.onlineDetectedAmount ?? 0,
   }
 }
 
@@ -1394,24 +1325,21 @@ export async function previewCombined(
   let salesTotalAmount = 0
   let salesByBranch: SaleBranchDetail[] = []
   let salesUnmatchedBranchNames: string[] = []
-  let onlineDetectedCount = 0
-  let onlineDetectedAmount = 0
 
   if (salesResult.status === 'fulfilled') {
     const { items } = salesResult.value
-    const cashQrisItems = items.filter((i) => !i.platform)
 
-    salesNewCount            = cashQrisItems.filter((i) => i.status === 'new').length
-    salesDupCount            = cashQrisItems.filter((i) => i.status === 'duplicate').length
-    salesSkippedCount        = cashQrisItems.filter((i) => i.status === 'skipped_payment').length
-    salesBranchNotFoundCount = cashQrisItems.filter((i) => i.status === 'branch_not_found').length
+    salesNewCount            = items.filter((i) => i.status === 'new').length
+    salesDupCount            = items.filter((i) => i.status === 'duplicate').length
+    salesSkippedCount        = items.filter((i) => i.status === 'skipped_payment').length
+    salesBranchNotFoundCount = items.filter((i) => i.status === 'branch_not_found').length
 
     const unmatchedNames = new Set(
-      cashQrisItems.filter((i) => i.status === 'branch_not_found').map((i) => i.branchName)
+      items.filter((i) => i.status === 'branch_not_found').map((i) => i.branchName)
     )
     salesUnmatchedBranchNames = Array.from(unmatchedNames).sort()
 
-    const newItems = cashQrisItems.filter((i) => i.status === 'new')
+    const newItems = items.filter((i) => i.status === 'new')
     salesTotalAmount = newItems.reduce((s, i) => s + i.amount, 0)
 
     const bMap = new Map<string, SaleBranchDetail>()
@@ -1423,10 +1351,6 @@ export async function previewCombined(
       bMap.set(item.branchName, b)
     }
     salesByBranch = Array.from(bMap.values()).sort((a, b) => b.total - a.total)
-
-    const newOnlineItems = items.filter((i) => i.platform && i.status === 'new')
-    onlineDetectedCount  = newOnlineItems.length
-    onlineDetectedAmount = newOnlineItems.reduce((s, i) => s + i.amount, 0)
   }
 
   // Build expenses summary
@@ -1489,8 +1413,6 @@ export async function previewCombined(
     salesTotalAmount,
     salesByBranch,
     salesUnmatchedBranchNames,
-    onlineDetectedCount,
-    onlineDetectedAmount,
     expensesNewCount,
     expensesDupCount,
     expensesBranchNotFoundCount,
@@ -1522,10 +1444,6 @@ function buildCombinedMessage(sales: KasirImportResult, expenses: KasirImportRes
     parts.push('Tidak ada kas keluar baru')
   } else {
     parts.push('Semua kas keluar sudah pernah diimport')
-  }
-
-  if (sales.onlineDetectedCount && sales.onlineDetectedCount > 0) {
-    parts.push(`${sales.onlineDetectedCount} transaksi online terdeteksi (${formatRupiahSimple(sales.onlineDetectedAmount ?? 0)}), lengkapi di halaman Penjualan Online`)
   }
 
   return parts.join('. ') + '.'
@@ -1588,7 +1506,6 @@ interface NormalizedSale {
   branchName:      string
   paymentMethod:   string
   paymentCategory: 'Tunai' | 'QRIS' | null
-  platform:        OnlinePlatform | null
   amount:          number
   cashier:         string
 }
@@ -1609,7 +1526,6 @@ function normalizeRawSaleRecord(r: AnyRecord): NormalizedSale | null {
 
   const paymentMethod   = getString(r, 'payment_method', 'metode_pembayaran', 'payment', 'method', 'jenis_pembayaran', 'cara_bayar')
   const paymentCategory = normalizePaymentMethod(paymentMethod)
-  const platform        = paymentCategory === null ? detectOnlinePlatform(paymentMethod) : null
 
   const amount = getNumber(r, 'amount', 'total', 'nominal', 'total_amount', 'grand_total', 'harga', 'nilai', 'jumlah', 'total_penjualan')
   if (amount <= 0) return null
@@ -1624,7 +1540,6 @@ function normalizeRawSaleRecord(r: AnyRecord): NormalizedSale | null {
     branchName,
     paymentMethod,
     paymentCategory,
-    platform,
     amount,
     cashier: cashier || 'Tidak Diketahui',
   }
@@ -1698,10 +1613,6 @@ function normalizeRawExpenseRecord(r: AnyRecord): NormalizedExpense | null {
 
 function filterByPaymentMethod(items: NormalizedSale[], filter: PaymentMethodFilter): NormalizedSale[] {
   return items.filter((item) => {
-    // Transaksi online (GoFood/GrabFood/ShopeeFood) selalu lolos, terlepas dari
-    // filter Tunai/QRIS yang dipilih — ini kategori terpisah yang ditampung
-    // untuk dilengkapi di halaman Penjualan Online, bukan langsung masuk cashflow.
-    if (item.platform !== null) return true
     if (item.paymentCategory === null) return false
     if (filter === 'Tunai') return item.paymentCategory === 'Tunai'
     if (filter === 'QRIS')  return item.paymentCategory === 'QRIS'
@@ -1710,19 +1621,15 @@ function filterByPaymentMethod(items: NormalizedSale[], filter: PaymentMethodFil
 }
 
 function buildSalesSummary(items: KasirSalePreviewItem[], _filter: PaymentMethodFilter): KasirSalePreviewSummary {
-  const totalNew           = items.filter((i) => i.status === 'new' && !i.platform).length
-  const totalDuplicate     = items.filter((i) => i.status === 'duplicate' && !i.platform).length
+  const totalNew           = items.filter((i) => i.status === 'new').length
+  const totalDuplicate     = items.filter((i) => i.status === 'duplicate').length
   const totalSkipped       = items.filter((i) => i.status === 'skipped_payment').length
-  const totalBranchNotFound = items.filter((i) => i.status === 'branch_not_found' && !i.platform).length
+  const totalBranchNotFound = items.filter((i) => i.status === 'branch_not_found').length
 
-  const newItems   = items.filter((i) => i.status === 'new' && !i.platform)
+  const newItems   = items.filter((i) => i.status === 'new')
   const totalCash  = newItems.filter((i) => i.paymentCategory === 'Tunai').reduce((s, i) => s + i.amount, 0)
   const totalQris  = newItems.filter((i) => i.paymentCategory === 'QRIS').reduce((s, i) => s + i.amount, 0)
   const totalAmount = totalCash + totalQris
-
-  const newOnlineItems = items.filter((i) => i.status === 'new' && i.platform)
-  const totalOnlineDetected       = newOnlineItems.length
-  const totalOnlineDetectedAmount = newOnlineItems.reduce((s, i) => s + i.amount, 0)
 
   const branchMap = new Map<string, { totalCash: number; totalQris: number; total: number }>()
   for (const item of newItems) {
@@ -1756,8 +1663,6 @@ function buildSalesSummary(items: KasirSalePreviewItem[], _filter: PaymentMethod
     totalCash,
     totalQris,
     totalAmount,
-    totalOnlineDetected,
-    totalOnlineDetectedAmount,
     byBranch,
     byDate,
   }

@@ -9,8 +9,6 @@ import {
   normalizePaymentMethod,
   isSetoranTunai,
   validateMappingTargets,
-  detectOnlinePlatform,
-  makeOnlineSaleImportKey,
   type KasirExpenseMappingConfig,
 } from '@/lib/kasir-import/shared'
 
@@ -93,8 +91,7 @@ export interface PullResult {
   totalPulled: number
   newCount: number
   skippedCount: number    // duplikat / data tidak valid
-  skippedPayment: number  // dilewati karena metode bukan Cash/QRIS/platform online
-  onlineDetected: number  // transaksi GoFood/GrabFood/ShopeeFood tertampung untuk dilengkapi
+  skippedPayment: number  // dilewati karena metode bukan Cash/QRIS
   errors: string[]
 }
 
@@ -476,8 +473,7 @@ export async function pullKasirToQueue(
   let totalPulled = 0
   let newCount = 0
   let skippedCount = 0
-  let skippedPayment = 0   // counter khusus metode bukan Cash/QRIS/platform online
-  let onlineDetected = 0   // transaksi GoFood/GrabFood/ShopeeFood tertampung
+  let skippedPayment = 0   // counter khusus metode bukan Cash/QRIS
 
   // Load branches + manual mappings secara paralel
   const [branches, branchMappings] = await Promise.all([
@@ -503,11 +499,9 @@ export async function pullKasirToQueue(
       const { tanggal, waktu } = normalizeDate(raw)
       if (!tanggal) { skippedCount++; continue }
 
-      // ── FILTER METODE PEMBAYARAN ──────────────────────────────────────
-      // Izinkan Cash/Tunai, QRIS, dan platform online (GoFood/GrabFood/
-      // ShopeeFood — ditampung terpisah untuk dilengkapi gross+potongannya).
-      // Metode lain (transfer, e-wallet, kartu) tetap dilewati.
-      // Cek banyak alias nama field agar sinkron dengan import manual.
+      // Hanya izinkan Cash/Tunai dan QRIS. Abaikan ShopeeFood, GoFood, GrabFood,
+      // transfer, voucher platform, dll. Cek banyak alias nama field agar
+      // sinkron dengan import manual.
       const rawMetode = str(
         raw,
         'metode_pembayaran', 'payment_method',
@@ -515,51 +509,16 @@ export async function pullKasirToQueue(
         'tipe_bayar', 'payment_type',
       )
       const paymentCategory = normalizePaymentMethod(rawMetode)
-      const platform = paymentCategory === null ? detectOnlinePlatform(rawMetode) : null
-
-      if (!paymentCategory && !platform) {
-        // Metode tidak dikenali sebagai Cash, QRIS, atau platform online → lewati
+      if (!paymentCategory) {
         skippedPayment++
         continue
       }
-      // ─────────────────────────────────────────────────────────────────
 
       const cabang = str(raw, 'cabang', 'branch_name', 'outlet')
       const matchedBranch = cabang ? matchBranch(cabang, branches) : null
       // Cek mapping manual jika auto-match gagal
       const branchId = matchedBranch?.id ?? (cabang ? (branchMappings.get(cabang) ?? null) : null)
       const amount = num(raw, 'total_penjualan', 'total', 'amount')
-
-      if (platform) {
-        if (amount <= 0) { skippedCount++; continue }
-
-        const importKey = makeOnlineSaleImportKey(platform, cabang || 'Tidak Diketahui', kasirId)
-        const { error } = await supabase
-          .from('online_sales_detections')
-          .upsert(
-            {
-              transaction_date: tanggal,
-              branch_id: branchId,
-              branch_name_raw: cabang || 'Tidak Diketahui',
-              platform,
-              kasir_transaction_id: kasirId,
-              time_wita: waktu,
-              detected_nett_amount: amount,
-              import_key: importKey,
-              source: 'kasir_sync' as const,
-              raw_data: raw,
-            },
-            { onConflict: 'import_key', ignoreDuplicates: true }
-          )
-
-        if (error && error.code !== '23505') {
-          errors.push(`Online ${platform} ID ${kasirId}: ${error.message}`)
-          skippedCount++
-        } else {
-          onlineDetected++
-        }
-        continue
-      }
 
       const rowData = {
         batch_id: batchId,
@@ -681,8 +640,7 @@ export async function pullKasirToQueue(
 
   // Susun pesan ringkasan untuk error_message (termasuk info metode dilewati)
   const summaryParts: string[] = []
-  if (onlineDetected > 0) summaryParts.push(`${onlineDetected} transaksi online terdeteksi (GoFood/GrabFood/ShopeeFood)`)
-  if (skippedPayment > 0) summaryParts.push(`${skippedPayment} dilewati (bukan Cash/QRIS/online)`)
+  if (skippedPayment > 0) summaryParts.push(`${skippedPayment} dilewati (bukan Cash/QRIS)`)
   if (errors.length > 0) summaryParts.push(...errors.slice(0, 4))
 
   await supabase
@@ -693,7 +651,6 @@ export async function pullKasirToQueue(
       total_pulled: totalPulled,
       new_count: newCount,
       skipped_count: skippedCount + skippedPayment,
-      online_detected_count: onlineDetected,
       error_message: summaryParts.length > 0 ? summaryParts.join(' | ') : null,
     })
     .eq('id', batchId)
@@ -707,7 +664,6 @@ export async function pullKasirToQueue(
     newCount,
     skippedCount,
     skippedPayment,
-    onlineDetected,
     errors,
   }
 }

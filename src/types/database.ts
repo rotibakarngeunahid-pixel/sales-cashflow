@@ -5,7 +5,7 @@ export type KasirSyncItemStatus = 'pending' | 'confirmed' | 'rejected'
 export type KasirSyncItemType = 'penjualan' | 'kas_keluar'
 export type SalesStatus = 'draft' | 'submitted' | 'posted' | 'void'
 export type CashflowType = 'cash_in' | 'cash_out'
-export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer' | 'auto_split_kurir' | 'inventori_waste' | 'online_sales'
+export type CashflowSource = 'manual' | 'sales' | 'purchase_order' | 'kasir_sales' | 'kasir_expenses' | 'beban_transfer' | 'auto_split_kurir' | 'inventori_waste'
 export type CashflowAutoSplitGroupStatus = 'active' | 'void'
 export type CashflowAutoSplitEntrySource = 'manual_cashflow' | 'kasir_import' | 'kasir_sync'
 
@@ -17,11 +17,6 @@ export type CategoryDefaultType = 'cash_in' | 'cash_out' | 'both'
 export type RawMaterialImportStatus = 'success' | 'failed'
 export type FoodWasteImportLogStatus = 'success' | 'failed'
 
-export type OnlinePlatform = 'gofood' | 'grabfood' | 'shopeefood'
-export type OnlineSalesStatus = 'draft' | 'posted' | 'void'
-export type OnlineSalesNettInputMode = 'calculated' | 'manual'
-export type OnlineSalesDeductionType = 'commission' | 'promo' | 'other'
-export type OnlineSalesDetectionSource = 'kasir_import' | 'kasir_sync'
 export type CategoryMappingMatchType = 'exact' | 'contains'
 
 export interface Profile {
@@ -203,7 +198,6 @@ export interface KasirSyncBatch {
   total_pulled: number
   new_count: number
   skipped_count: number
-  online_detected_count: number
   error_message: string | null
   triggered_by: string
   created_at: string
@@ -305,54 +299,6 @@ export interface RawMaterialImportLog {
   created_by: string | null
   created_at: string
   actor?: Pick<Profile, 'full_name' | 'email'> | null
-}
-
-export interface OnlineSalesReport {
-  id: string
-  report_date: string
-  branch_id: string
-  branch?: Pick<Branch, 'id' | 'name'> | null
-  platform: OnlinePlatform
-  gross_amount: number
-  total_deduction: number
-  nett_amount: number
-  nett_input_mode: OnlineSalesNettInputMode
-  detected_nett_amount: number
-  status: OnlineSalesStatus
-  notes: string | null
-  created_by: string | null
-  updated_by: string | null
-  created_at: string
-  updated_at: string
-  deductions?: OnlineSalesDeduction[]
-  creator?: Pick<Profile, 'full_name' | 'email'> | null
-  updater?: Pick<Profile, 'full_name' | 'email'> | null
-}
-
-export interface OnlineSalesDeduction {
-  id: string
-  report_id: string
-  deduction_type: OnlineSalesDeductionType
-  label: string | null
-  amount: number
-  created_at: string
-}
-
-export interface OnlineSalesDetection {
-  id: string
-  transaction_date: string
-  branch_id: string | null
-  branch?: Pick<Branch, 'id' | 'name'> | null
-  branch_name_raw: string
-  platform: OnlinePlatform
-  kasir_transaction_id: string
-  time_wita: string | null
-  detected_nett_amount: number
-  import_key: string
-  source: OnlineSalesDetectionSource
-  raw_data: Record<string, unknown> | null
-  online_sales_report_id: string | null
-  created_at: string
 }
 
 export interface Database {
@@ -1036,7 +982,6 @@ export interface Database {
           total_pulled: number
           new_count: number
           skipped_count: number
-          online_detected_count: number
           error_message: string | null
           triggered_by: string
           created_at: string
@@ -1048,7 +993,6 @@ export interface Database {
           total_pulled?: number
           new_count?: number
           skipped_count?: number
-          online_detected_count?: number
           error_message?: string | null
           triggered_by?: string
         }
@@ -1058,145 +1002,9 @@ export interface Database {
           total_pulled?: number
           new_count?: number
           skipped_count?: number
-          online_detected_count?: number
           error_message?: string | null
         }
         Relationships: []
-      }
-      online_sales_reports: {
-        Row: {
-          id: string
-          report_date: string
-          branch_id: string
-          platform: OnlinePlatform
-          gross_amount: number
-          total_deduction: number
-          nett_amount: number
-          nett_input_mode: OnlineSalesNettInputMode
-          detected_nett_amount: number
-          status: OnlineSalesStatus
-          notes: string | null
-          created_by: string | null
-          updated_by: string | null
-          created_at: string
-          updated_at: string
-        }
-        Insert: {
-          report_date: string
-          branch_id: string
-          platform: OnlinePlatform
-          gross_amount?: number
-          total_deduction?: number
-          nett_amount?: number
-          nett_input_mode?: OnlineSalesNettInputMode
-          detected_nett_amount?: number
-          status?: OnlineSalesStatus
-          notes?: string | null
-          created_by?: string | null
-          updated_by?: string | null
-        }
-        Update: {
-          report_date?: string
-          branch_id?: string
-          platform?: OnlinePlatform
-          gross_amount?: number
-          total_deduction?: number
-          nett_amount?: number
-          nett_input_mode?: OnlineSalesNettInputMode
-          detected_nett_amount?: number
-          status?: OnlineSalesStatus
-          notes?: string | null
-          updated_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'online_sales_reports_branch_id_fkey'
-            columns: ['branch_id']
-            isOneToOne: false
-            referencedRelation: 'branches'
-            referencedColumns: ['id']
-          }
-        ]
-      }
-      online_sales_deductions: {
-        Row: {
-          id: string
-          report_id: string
-          deduction_type: OnlineSalesDeductionType
-          label: string | null
-          amount: number
-          created_at: string
-        }
-        Insert: {
-          report_id: string
-          deduction_type: OnlineSalesDeductionType
-          label?: string | null
-          amount?: number
-        }
-        Update: {
-          deduction_type?: OnlineSalesDeductionType
-          label?: string | null
-          amount?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'online_sales_deductions_report_id_fkey'
-            columns: ['report_id']
-            isOneToOne: false
-            referencedRelation: 'online_sales_reports'
-            referencedColumns: ['id']
-          }
-        ]
-      }
-      online_sales_detections: {
-        Row: {
-          id: string
-          transaction_date: string
-          branch_id: string | null
-          branch_name_raw: string
-          platform: OnlinePlatform
-          kasir_transaction_id: string
-          time_wita: string | null
-          detected_nett_amount: number
-          import_key: string
-          source: OnlineSalesDetectionSource
-          raw_data: Record<string, unknown> | null
-          online_sales_report_id: string | null
-          created_at: string
-        }
-        Insert: {
-          transaction_date: string
-          branch_id?: string | null
-          branch_name_raw: string
-          platform: OnlinePlatform
-          kasir_transaction_id: string
-          time_wita?: string | null
-          detected_nett_amount: number
-          import_key: string
-          source: OnlineSalesDetectionSource
-          raw_data?: Record<string, unknown> | null
-          online_sales_report_id?: string | null
-        }
-        Update: {
-          branch_id?: string | null
-          online_sales_report_id?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: 'online_sales_detections_branch_id_fkey'
-            columns: ['branch_id']
-            isOneToOne: false
-            referencedRelation: 'branches'
-            referencedColumns: ['id']
-          },
-          {
-            foreignKeyName: 'online_sales_detections_report_id_fkey'
-            columns: ['online_sales_report_id']
-            isOneToOne: false
-            referencedRelation: 'online_sales_reports'
-            referencedColumns: ['id']
-          }
-        ]
       }
       kasir_branch_mappings: {
         Row: {
