@@ -107,18 +107,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       branch_id: initialData?.branch_id || '',
       cash: initialData?.cash || 0,
       qris_gross: initialData?.qris_gross || initialData?.qris || 0,
-      gofood_gross: initialData?.gofood_gross || 0,
-      gofood_promo: initialData?.gofood_promo || 0,
-      gofood_commission: initialData?.gofood_commission || 0,
       gofood_nett: initialData?.gofood_nett || 0,
-      grabfood_gross: initialData?.grabfood_gross || 0,
-      grabfood_promo: initialData?.grabfood_promo || 0,
-      grabfood_commission: initialData?.grabfood_commission || 0,
-      grabfood_ads: initialData?.grabfood_ads || 0,
       grabfood_nett: initialData?.grabfood_nett || 0,
-      shopeefood_gross: initialData?.shopeefood_gross || 0,
-      shopeefood_promo: initialData?.shopeefood_promo || 0,
-      shopeefood_commission: initialData?.shopeefood_commission || 0,
       shopeefood_nett: initialData?.shopeefood_nett || 0,
       notes: initialData?.notes || '',
     },
@@ -129,9 +119,9 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   // Auto-expand sections that have data (when editing)
   useEffect(() => {
     if (initialData) {
-      if ((initialData.gofood_gross || 0) > 0 || (initialData.gofood_nett || 0) > 0) setShowGofood(true)
-      if ((initialData.grabfood_gross || 0) > 0 || (initialData.grabfood_nett || 0) > 0) setShowGrabfood(true)
-      if ((initialData.shopeefood_gross || 0) > 0 || (initialData.shopeefood_nett || 0) > 0) setShowShopeefood(true)
+      if ((initialData.gofood_nett || 0) > 0) setShowGofood(true)
+      if ((initialData.grabfood_nett || 0) > 0) setShowGrabfood(true)
+      if ((initialData.shopeefood_nett || 0) > 0) setShowShopeefood(true)
     }
   }, [initialData])
 
@@ -141,22 +131,26 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
   const qrisNett = qrisGross - qrisMdr
 
   useEffect(() => {
+    const gofoodNett = Number(watchedValues.gofood_nett) || 0
+    const grabfoodNett = Number(watchedValues.grabfood_nett) || 0
+    const shopeefoodNett = Number(watchedValues.shopeefood_nett) || 0
+
     const result = calculateSales({
       cash: Number(watchedValues.cash) || 0,
       qris: qrisNett,
-      gofood_gross: Number(watchedValues.gofood_gross) || 0,
-      gofood_promo: Number(watchedValues.gofood_promo) || 0,
-      gofood_commission: Number(watchedValues.gofood_commission) || 0,
-      gofood_nett: Number(watchedValues.gofood_nett) || 0,
-      grabfood_gross: Number(watchedValues.grabfood_gross) || 0,
-      grabfood_promo: Number(watchedValues.grabfood_promo) || 0,
-      grabfood_commission: Number(watchedValues.grabfood_commission) || 0,
-      grabfood_ads: Number(watchedValues.grabfood_ads) || 0,
-      grabfood_nett: Number(watchedValues.grabfood_nett) || 0,
-      shopeefood_gross: Number(watchedValues.shopeefood_gross) || 0,
-      shopeefood_promo: Number(watchedValues.shopeefood_promo) || 0,
-      shopeefood_commission: Number(watchedValues.shopeefood_commission) || 0,
-      shopeefood_nett: Number(watchedValues.shopeefood_nett) || 0,
+      gofood_gross: gofoodNett,
+      gofood_promo: 0,
+      gofood_commission: 0,
+      gofood_nett: gofoodNett,
+      grabfood_gross: grabfoodNett,
+      grabfood_promo: 0,
+      grabfood_commission: 0,
+      grabfood_ads: 0,
+      grabfood_nett: grabfoodNett,
+      shopeefood_gross: shopeefoodNett,
+      shopeefood_promo: 0,
+      shopeefood_commission: 0,
+      shopeefood_nett: shopeefoodNett,
     })
     setCalcs(result)
   }, [watchedValues, qrisNett])
@@ -194,22 +188,28 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
     const mdr = qrisMdrEnabled ? Math.round(gross * QRIS_MDR_RATE) : 0
     const nett = gross - mdr
 
+    // Tidak ada breakdown gross/promo/komisi lagi — nominal yang diinput
+    // langsung dianggap nett, jadi gross = nett dan potongan selalu 0.
+    const gofoodNett = Number(data.gofood_nett)
+    const grabfoodNett = Number(data.grabfood_nett)
+    const shopeefoodNett = Number(data.shopeefood_nett)
+
     const computed = calculateSales({
       cash: Number(data.cash),
       qris: nett,
-      gofood_gross: Number(data.gofood_gross),
-      gofood_promo: Number(data.gofood_promo),
-      gofood_commission: Number(data.gofood_commission),
-      gofood_nett: Number(data.gofood_nett),
-      grabfood_gross: Number(data.grabfood_gross),
-      grabfood_promo: Number(data.grabfood_promo),
-      grabfood_commission: Number(data.grabfood_commission),
-      grabfood_ads: Number(data.grabfood_ads),
-      grabfood_nett: Number(data.grabfood_nett),
-      shopeefood_gross: Number(data.shopeefood_gross),
-      shopeefood_promo: Number(data.shopeefood_promo),
-      shopeefood_commission: Number(data.shopeefood_commission),
-      shopeefood_nett: Number(data.shopeefood_nett),
+      gofood_gross: gofoodNett,
+      gofood_promo: 0,
+      gofood_commission: 0,
+      gofood_nett: gofoodNett,
+      grabfood_gross: grabfoodNett,
+      grabfood_promo: 0,
+      grabfood_commission: 0,
+      grabfood_ads: 0,
+      grabfood_nett: grabfoodNett,
+      shopeefood_gross: shopeefoodNett,
+      shopeefood_promo: 0,
+      shopeefood_commission: 0,
+      shopeefood_nett: shopeefoodNett,
     })
 
     const payload = {
@@ -218,19 +218,19 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
       qris: nett,
       qris_gross: gross,
       qris_mdr: mdr,
-      gofood_gross: Number(data.gofood_gross),
-      gofood_promo: Number(data.gofood_promo),
-      gofood_commission: Number(data.gofood_commission),
-      gofood_nett: Number(data.gofood_nett),
-      grabfood_gross: Number(data.grabfood_gross),
-      grabfood_promo: Number(data.grabfood_promo),
-      grabfood_commission: Number(data.grabfood_commission),
-      grabfood_ads: Number(data.grabfood_ads),
-      grabfood_nett: Number(data.grabfood_nett),
-      shopeefood_gross: Number(data.shopeefood_gross),
-      shopeefood_promo: Number(data.shopeefood_promo),
-      shopeefood_commission: Number(data.shopeefood_commission),
-      shopeefood_nett: Number(data.shopeefood_nett),
+      gofood_gross: gofoodNett,
+      gofood_promo: 0,
+      gofood_commission: 0,
+      gofood_nett: gofoodNett,
+      grabfood_gross: grabfoodNett,
+      grabfood_promo: 0,
+      grabfood_commission: 0,
+      grabfood_ads: 0,
+      grabfood_nett: grabfoodNett,
+      shopeefood_gross: shopeefoodNett,
+      shopeefood_promo: 0,
+      shopeefood_commission: 0,
+      shopeefood_nett: shopeefoodNett,
       ...computed,
       updated_by: user?.id ?? null,
     }
@@ -452,11 +452,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           badge={Number(watchedValues.gofood_nett) > 0 ? formatRupiah(Number(watchedValues.gofood_nett)) : undefined}
         />
         {showGofood && (
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <NumericInput label="Gross Sales" name="gofood_gross" register={register} />
-            <NumericInput label="Promo/Diskon" name="gofood_promo" register={register} />
-            <NumericInput label="Komisi/Platform Fee" name="gofood_commission" register={register} />
-            <NumericInput label="Nett Sales" name="gofood_nett" register={register} />
+          <div className="mt-3 sm:w-1/2 sm:pr-1.5">
+            <NumericInput label="Nominal" name="gofood_nett" register={register} />
           </div>
         )}
       </div>
@@ -470,12 +467,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           badge={Number(watchedValues.grabfood_nett) > 0 ? formatRupiah(Number(watchedValues.grabfood_nett)) : undefined}
         />
         {showGrabfood && (
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <NumericInput label="Gross Sales" name="grabfood_gross" register={register} />
-            <NumericInput label="Promo/Diskon" name="grabfood_promo" register={register} />
-            <NumericInput label="Komisi/Platform Fee" name="grabfood_commission" register={register} />
-            <NumericInput label="Ads" name="grabfood_ads" register={register} />
-            <NumericInput label="Nett Sales" name="grabfood_nett" register={register} />
+          <div className="mt-3 sm:w-1/2 sm:pr-1.5">
+            <NumericInput label="Nominal" name="grabfood_nett" register={register} />
           </div>
         )}
       </div>
@@ -489,11 +482,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
           badge={Number(watchedValues.shopeefood_nett) > 0 ? formatRupiah(Number(watchedValues.shopeefood_nett)) : undefined}
         />
         {showShopeefood && (
-          <div className="grid grid-cols-2 gap-3 mt-3">
-            <NumericInput label="Gross Sales" name="shopeefood_gross" register={register} />
-            <NumericInput label="Promo/Diskon" name="shopeefood_promo" register={register} />
-            <NumericInput label="Komisi/Platform Fee" name="shopeefood_commission" register={register} />
-            <NumericInput label="Nett Sales" name="shopeefood_nett" register={register} />
+          <div className="mt-3 sm:w-1/2 sm:pr-1.5">
+            <NumericInput label="Nominal" name="shopeefood_nett" register={register} />
           </div>
         )}
       </div>
@@ -516,21 +506,8 @@ export default function SalesForm({ initialData, onSuccess, onCancel }: SalesFor
               )}
             </div>
             <div>
-              <p className="text-slate-500 text-xs">Total Online Gross</p>
-              <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_online_gross)}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Total Online Nett</p>
+              <p className="text-slate-500 text-xs">Total Online</p>
               <p className="font-semibold text-rupiah">{formatRupiah(calcs.total_online_nett)}</p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs">Total Potongan Online</p>
-              <p className="font-semibold text-red-600 text-rupiah">
-                -{formatRupiah(calcs.total_online_deduction)}
-                {calcs.online_deduction_percentage > 0 && (
-                  <span className="text-xs font-normal ml-1">({calcs.online_deduction_percentage.toFixed(1)}%)</span>
-                )}
-              </p>
             </div>
           </div>
           <div className="mt-3 pt-3 border-t border-rbn-orange/20">
